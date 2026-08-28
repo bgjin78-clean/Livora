@@ -17,6 +17,7 @@ function setAuthCookie(res, token) {
   res.cookie(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
+    secure: config.cookieSecure,
     maxAge: 12 * 60 * 60 * 1000
   });
 }

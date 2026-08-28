@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: livora
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+    disk:
+      name: livora-data
+      mountPath: /app/data
+      sizeGB: 1

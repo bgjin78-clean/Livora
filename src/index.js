@@ -10,14 +10,18 @@ const { attachRealtime, broadcastToUser } = require("./realtime");
 db.open();
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, name: "livora" });
+});
 app.use("/api", createRouter(broadcastToUser));
 app.use(express.static(path.join(config.rootDir, "public")));
 
 const server = http.createServer(app);
 attachRealtime(server);
 
-server.listen(config.port, () => {
-  console.log(`Livora  http://localhost:${config.port}`);
+server.listen(config.port, config.host, () => {
+  console.log(`Livora  http://${config.host}:${config.port}`);
 });
