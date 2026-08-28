@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Livora</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Outfit:wght@340;400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="loginView" class="login-shell">
+    <section class="login-story">
+      <p class="eyebrow">LIVE COMMERCE DESK</p>
+      <h1>Livora</h1>
+      <p class="lede">승인된 틱톡·유튜브만 연결되는<br />서버형 라이브 주문 데스크</p>
+      <ul>
+        <li>설치 없이 브라우저에서 실행</li>
+        <li>승인된 채널만 수집</li>
+        <li>주문·엑셀·채팅 캡처를 서버에 보관</li>
+      </ul>
+    </section>
+    <section class="login-card">
+      <p class="eyebrow">WELCOME</p>
+      <h2>계정으로 입장</h2>
+      <label>
+        <span>아이디</span>
+        <input id="loginId" type="text" autocomplete="username" />
+      </label>
+      <label>
+        <span>비밀번호</span>
+        <input id="loginPw" type="password" autocomplete="current-password" />
+      </label>
+      <button id="loginBtn" class="gold-btn" type="button">Livora 시작</button>
+      <p id="loginError" class="error"></p>
+      <p class="hint">기본 관리자 admin / livora-admin · 판매자 seller / seller1234</p>
+    </section>
+  </div>
+
+  <div id="appView" class="app-shell hidden">
+    <aside>
+      <div class="brand">
+        <strong>Livora</strong>
+        <span>LIVE DESK</span>
+      </div>
+      <nav>
+        <button class="nav-btn active" data-page="desk">주문 수집</button>
+        <button class="nav-btn" data-page="orders">주문 목록</button>
+        <button class="nav-btn" data-page="files">엑셀·정산서</button>
+        <button id="adminNav" class="nav-btn hidden" data-page="admin">승인 관리</button>
+      </nav>
+      <div class="aside-user">
+        <b id="sideName">-</b>
+        <small id="sideMeta">-</small>
+        <button id="logoutBtn" type="button">로그아웃</button>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="pageEyebrow">COLLECTOR</p>
+          <h2 id="pageTitle">주문 수집</h2>
+        </div>
+        <div id="liveBadge" class="badge">대기</div>
+      </header>
+
+      <section id="deskPage" class="page">
+        <div class="control-row">
+          <select id="platformSelect"></select>
+          <select id="channelSelect"></select>
+          <button id="startBtn" class="gold-btn" type="button">수집 시작</button>
+          <button id="stopBtn" class="ghost-btn" type="button">종료</button>
+          <button id="qtyBtn" class="ghost-btn" type="button">이거모드</button>
+        </div>
+        <p id="channelIdsHint" class="register-hint">승인된 채널을 불러오는 중</p>
+        <div class="register-row">
+          <input id="productName" placeholder="상품명" />
+          <input id="productNumber" inputmode="numeric" placeholder="번호" />
+          <input id="productSize" placeholder="사이즈  s.m.l" />
+          <input id="productColor" placeholder="색상  블랙,화이트" />
+          <input id="productQty" inputmode="numeric" placeholder="수량" />
+          <input id="productPrice" inputmode="numeric" placeholder="가격" />
+          <input id="productStock" inputmode="numeric" placeholder="재고" />
+          <button id="registerBtn" class="mint-btn" type="button">상품 등록</button>
+        </div>
+        <p id="currentProduct" class="register-hint">현재 등록 상품 없음</p>
+        <div id="productList" class="product-chips"></div>
+        <div class="desk-grid">
+          <article class="panel">
+            <h3>실시간 채팅</h3>
+            <div id="chatList" class="feed"></div>
+          </article>
+          <article class="panel">
+            <h3>접수된 주문</h3>
+            <div id="liveOrders" class="feed"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="ordersPage" class="page hidden">
+        <div class="stats">
+          <article><span>구매자</span><b id="statBuyers">0</b></article>
+          <article><span>주문 줄</span><b id="statOrders">0</b></article>
+          <article><span>합계</span><b id="statAmount">0</b></article>
+        </div>
+        <label class="guess-filter">
+          <input id="guessOnly" type="checkbox" />
+          추정 주문만 보기 (채팅에 상품명이 없음)
+        </label>
+        <table>
+          <thead>
+            <tr>
+              <th>닉네임</th><th>상품</th><th>옵션</th><th>수량</th><th>금액</th><th>인식</th><th>채팅</th>
+            </tr>
+          </thead>
+          <tbody id="orderTable"></tbody>
+        </table>
+      </section>
+
+      <section id="filesPage" class="page hidden">
+        <p class="lede small">주문 엑셀과, 검증용 채팅 엑셀(ID·채팅내용)을 받을 수 있습니다.</p>
+        <div class="control-row">
+          <button id="excelBtn" class="gold-btn" type="button">주문 엑셀</button>
+          <button id="chatExcelFilesBtn" class="mint-btn" type="button">채팅 엑셀</button>
+          <button id="invoiceBtn" class="ghost-btn" type="button">정산서 만들기</button>
+        </div>
+        <div id="fileList" class="file-list"></div>
+      </section>
+
+      <section id="adminPage" class="page hidden">
+        <div class="admin-grid">
+          <article class="panel">
+            <h3>계정 추가</h3>
+            <input id="newUser" placeholder="아이디" />
+            <input id="newPass" placeholder="비밀번호" />
+            <input id="newName" placeholder="이름" />
+            <select id="newRole">
+              <option value="seller">판매자</option>
+              <option value="admin">관리자</option>
+            </select>
+            <input id="newExpire" type="date" />
+            <button id="addUserBtn" class="gold-btn" type="button">계정 생성</button>
+            <div id="userList" class="stack-list"></div>
+          </article>
+          <article class="panel">
+            <h3>채널 승인</h3>
+            <select id="channelUser"></select>
+            <select id="channelPlatform">
+              <option value="tiktok">TikTok</option>
+              <option value="youtube">YouTube</option>
+            </select>
+            <input id="channelId" placeholder="틱톡ID 또는 유튜브 채널/라이브" />
+            <input id="channelLabel" placeholder="표시 이름" />
+            <button id="addChannelBtn" class="mint-btn" type="button">승인 추가</button>
+            <div id="channelList" class="stack-list"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

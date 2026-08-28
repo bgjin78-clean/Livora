@@ -1,0 +1,27 @@
+{
+  "name": "livora",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Livora — 승인된 라이브 채널의 채팅을 서버에서 모아 주문을 접수합니다.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "axios": "^1.11.0",
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^12.2.0",
+    "canvas": "^3.2.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "tiktok-live-connector": "2.1.1-beta1",
+    "ws": "^8.18.3"
+  }
+}
