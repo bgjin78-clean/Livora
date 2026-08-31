@@ -64,7 +64,6 @@ input, select {
 .mint-btn { background: var(--mint); color: #07231d; font-weight: 600; }
 .ghost-btn { background: transparent; color: var(--text); border: 1px solid var(--line); }
 .error { color: var(--danger); min-height: 20px; }
-.hint { color: var(--muted); font-size: 12px; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; }
 aside {
