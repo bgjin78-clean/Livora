@@ -10,10 +10,17 @@ const { renderInvoices } = require("./export/images");
 function createRouter(broadcast) {
   const router = express.Router();
 
-  function exportSessionId(user) {
-    const live = collector.getUserSession(user.id);
-    if (live) return live.id;
-    return db.listLiveSessions(user.id)[0]?.id || "";
+  function lastSessionFor(userId) {
+    const row = db.listLiveSessions(userId)[0];
+    if (!row) return null;
+    return {
+      id: row.id,
+      platform: row.platform,
+      channelId: row.channel_id,
+      status: row.status,
+      startedAt: row.started_at,
+      stoppedAt: row.stopped_at
+    };
   }
 
   router.post("/login", (req, res) => {
@@ -34,7 +41,8 @@ function createRouter(broadcast) {
       ok: true,
       user: req.user,
       channels: req.user.role === "admin" ? db.listChannels() : db.listChannels(req.user.id),
-      session: current
+      session: current,
+      lastSession: current || lastSessionFor(req.user.id)
     });
   });
 
@@ -151,9 +159,10 @@ function createRouter(broadcast) {
 
   router.post("/sessions/stop", auth.requireAuth, async (req, res) => {
     const live = collector.getUserSession(req.user.id);
-    if (!live) return res.json({ ok: true, session: null });
-    const stopped = await collector.stopSession(live.id);
-    res.json({ ok: true, session: stopped });
+    if (!live) return res.json({ ok: true, session: null, lastSession: lastSessionFor(req.user.id) });
+    await collector.stopSession(live.id);
+    const lastSession = lastSessionFor(req.user.id);
+    res.json({ ok: true, session: lastSession, lastSession });
   });
 
   router.post("/sessions/products", auth.requireAuth, async (req, res) => {
@@ -194,12 +203,15 @@ function createRouter(broadcast) {
 
   router.get("/sessions/current", auth.requireAuth, (req, res) => {
     const live = collector.getUserSession(req.user.id);
+    const lastSession = collector.publicSession(live) || lastSessionFor(req.user.id);
+    const sessionId = lastSession?.id;
     res.json({
       ok: true,
       session: collector.publicSession(live),
-      chats: live ? db.listChats(live.id, 120) : [],
-      orders: live ? db.listOrders(live.id) : [],
-      products: live ? db.listProducts(live.id) : []
+      lastSession,
+      chats: sessionId ? db.listChats(sessionId, 120) : [],
+      orders: sessionId ? db.listOrders(sessionId) : [],
+      products: sessionId ? db.listProducts(sessionId) : []
     });
   });
 

@@ -7,7 +7,8 @@ const state = {
   products: [],
   guessOnly: false,
   editingUserId: null,
-  adminUsers: []
+  adminUsers: [],
+  lastSession: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -172,10 +173,33 @@ function renderOrders() {
   $("statAmount").textContent = all.reduce((s, o) => s + Number(o.amount || 0), 0).toLocaleString("ko-KR");
 }
 
+function exportSession() {
+  return state.session || state.lastSession;
+}
+
+function setLastSession(session) {
+  if (session?.id) state.lastSession = session;
+}
+
+function updateFilesHint() {
+  const hint = $("filesHint");
+  if (!hint) return;
+  const session = exportSession();
+  if (!session) {
+    hint.textContent = "아직 받을 방송이 없습니다. 수집을 한 번 하면 종료 후에도 받을 수 있습니다.";
+    return;
+  }
+  const live = Boolean(state.session);
+  hint.textContent = live
+    ? `지금 방송: ${platformLabel(session.platform)} ${session.channelId || session.channel_id || ""}`
+    : `직전 방송: ${platformLabel(session.platform)} ${session.channelId || session.channel_id || ""} · 다음 수집 전까지 이 방송을 받습니다.`;
+}
+
 function setLiveBadge() {
   const live = Boolean(state.session);
   $("liveBadge").textContent = live ? `${platformLabel(state.session.platform)} ${state.session.channelId}` : "대기";
   $("liveBadge").classList.toggle("live", live);
+  updateFilesHint();
 }
 
 function connectWs() {
@@ -228,6 +252,7 @@ async function bootApp() {
   state.user = data.user;
   state.channels = data.channels || [];
   state.session = data.session;
+  setLastSession(data.session || data.lastSession);
   $("sideName").textContent = data.user.name;
   $("sideMeta").textContent = `${data.user.role} · ${data.user.expireDate || ""}`;
   $("adminNav").classList.toggle("hidden", data.user.role !== "admin");
@@ -373,6 +398,7 @@ $("startBtn").onclick = async () => {
   try {
     const data = await api("/api/sessions/start", { method: "POST", body: { platform, channelId } });
     state.session = data.session;
+    setLastSession(data.session);
     state.chats = [];
     state.orders = [];
     renderChats();
@@ -384,7 +410,8 @@ $("startBtn").onclick = async () => {
 };
 
 $("stopBtn").onclick = async () => {
-  await api("/api/sessions/stop", { method: "POST" });
+  const data = await api("/api/sessions/stop", { method: "POST" });
+  setLastSession(data.lastSession || data.session || state.session);
   state.session = null;
   setLiveBadge();
 };
@@ -541,9 +568,10 @@ async function downloadFile(url, filename) {
 }
 
 $("excelBtn").onclick = async () => {
-  if (!state.session) return alert("진행 중인 세션이 없습니다.");
+  const session = exportSession();
+  if (!session) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
   try {
-    await downloadFile(`/api/sessions/${state.session.id}/export/excel`, "livora-orders.xlsx");
+    await downloadFile(`/api/sessions/${session.id}/export/excel`, "livora-orders.xlsx");
   } catch (err) {
     alert(err.message);
   }
@@ -560,10 +588,11 @@ async function downloadChatExcel() {
 $("chatExcelFilesBtn").onclick = downloadChatExcel;
 
 $("invoiceBtn").onclick = async () => {
-  if (!state.session) return alert("진행 중인 세션이 없습니다.");
-  const data = await api(`/api/sessions/${state.session.id}/export/invoices`);
+  const session = exportSession();
+  if (!session) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
+  const data = await api(`/api/sessions/${session.id}/export/invoices`);
   $("fileList").innerHTML = (data.files || []).map((file) => `
-    <a class="file-item" href="/api/sessions/${state.session.id}/invoices/${encodeURIComponent(file)}" target="_blank">${file}</a>
+    <a class="file-item" href="/api/sessions/${session.id}/invoices/${encodeURIComponent(file)}" target="_blank">${file}</a>
   `).join("") || "<div class='file-item'>생성된 정산서가 없습니다.</div>";
 };
 
