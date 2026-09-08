@@ -3,6 +3,7 @@ const path = require("path");
 const Database = require("better-sqlite3");
 const bcrypt = require("bcryptjs");
 const config = require("./config");
+const accountBackup = require("./accountBackup");
 
 let db;
 
@@ -125,9 +126,85 @@ function now() {
   return new Date().toISOString();
 }
 
+function snapshotAccounts(conn = db) {
+  return {
+    savedAt: now(),
+    users: conn.prepare(`
+      SELECT username, password_hash, name, role, status, expire_date, created_at
+      FROM users ORDER BY id ASC
+    `).all(),
+    channels: conn.prepare(`
+      SELECT u.username, c.platform, c.channel_id, c.label, c.created_at
+      FROM approved_channels c
+      JOIN users u ON u.id = c.user_id
+      ORDER BY c.id ASC
+    `).all()
+  };
+}
+
+function persistAccounts() {
+  try {
+    accountBackup.save(snapshotAccounts(open()));
+  } catch (err) {
+    console.error("계정 백업을 저장하지 못했습니다.", err.message);
+  }
+}
+
+function restoreAccounts(conn, backup) {
+  const source = backup || accountBackup.load();
+  if (!source?.users?.length) return 0;
+
+  const insertUser = conn.prepare(`
+    INSERT INTO users (username, password_hash, name, role, status, expire_date, created_at)
+    VALUES (@username, @password_hash, @name, @role, @status, @expire_date, @created_at)
+  `);
+  let added = 0;
+  for (const user of source.users) {
+    if (!user?.username || conn.prepare("SELECT id FROM users WHERE username = ?").get(user.username)) continue;
+    insertUser.run({
+      username: user.username,
+      password_hash: user.password_hash,
+      name: user.name || user.username,
+      role: user.role || "seller",
+      status: user.status || "active",
+      expire_date: user.expire_date || "2028-12-31",
+      created_at: user.created_at || now()
+    });
+    added += 1;
+  }
+
+  const insertChannel = conn.prepare(`
+    INSERT OR IGNORE INTO approved_channels (user_id, platform, channel_id, label, created_at)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  for (const channel of source.channels || []) {
+    const owner = conn.prepare("SELECT id FROM users WHERE username = ?").get(channel.username);
+    if (!owner || !channel.platform || !channel.channel_id) continue;
+    insertChannel.run(
+      owner.id,
+      channel.platform,
+      channel.channel_id,
+      channel.label || "",
+      channel.created_at || now()
+    );
+  }
+  return added;
+}
+
+function importAccountBackup(backup) {
+  const added = restoreAccounts(open(), backup);
+  persistAccounts();
+  return { ok: true, added, users: listUsers() };
+}
+
 function seed() {
+  const restored = restoreAccounts(db);
   const count = db.prepare("SELECT COUNT(*) AS n FROM users").get().n;
-  if (count > 0) return;
+  if (count > 0) {
+    if (restored) console.log(`Livora 계정 백업에서 ${restored}개를 복구했습니다.`);
+    persistAccounts();
+    return;
+  }
 
   const insertUser = db.prepare(`
     INSERT INTO users (username, password_hash, name, role, status, expire_date, created_at)
@@ -143,35 +220,39 @@ function seed() {
     created_at: now()
   });
 
-  const seller = insertUser.run({
-    username: "seller",
-    password_hash: bcrypt.hashSync("seller1234", 10),
-    name: "판매자",
-    role: "seller",
-    expire_date: "2028-12-31",
-    created_at: now()
-  });
+  if (!config.isProd) {
+    const seller = insertUser.run({
+      username: "seller",
+      password_hash: bcrypt.hashSync("seller1234", 10),
+      name: "판매자",
+      role: "seller",
+      expire_date: "2028-12-31",
+      created_at: now()
+    });
 
-  const insertChannel = db.prepare(`
-    INSERT INTO approved_channels (user_id, platform, channel_id, label, created_at)
-    VALUES (@user_id, @platform, @channel_id, @label, @created_at)
-  `);
+    const insertChannel = db.prepare(`
+      INSERT INTO approved_channels (user_id, platform, channel_id, label, created_at)
+      VALUES (@user_id, @platform, @channel_id, @label, @created_at)
+    `);
 
-  insertChannel.run({
-    user_id: seller.lastInsertRowid,
-    platform: "tiktok",
-    channel_id: "nandapick21",
-    label: "틱톡 샘플",
-    created_at: now()
-  });
+    insertChannel.run({
+      user_id: seller.lastInsertRowid,
+      platform: "tiktok",
+      channel_id: "nandapick21",
+      label: "틱톡 샘플",
+      created_at: now()
+    });
 
-  insertChannel.run({
-    user_id: seller.lastInsertRowid,
-    platform: "youtube",
-    channel_id: "땡도령2",
-    label: "유튜브 샘플",
-    created_at: now()
-  });
+    insertChannel.run({
+      user_id: seller.lastInsertRowid,
+      platform: "youtube",
+      channel_id: "땡도령2",
+      label: "유튜브 샘플",
+      created_at: now()
+    });
+  }
+
+  persistAccounts();
 }
 
 function getUserByUsername(username) {
@@ -202,7 +283,9 @@ function createUser({ username, password, name, role, expireDate, status }) {
     expireDate || "2028-12-31",
     now()
   );
-  return getUserById(result.lastInsertRowid);
+  const user = getUserById(result.lastInsertRowid);
+  persistAccounts();
+  return user;
 }
 
 function countAdmins() {
@@ -229,7 +312,9 @@ function updateUser(id, patch) {
     SET username = @username, name = @name, role = @role, status = @status, expire_date = @expire_date, password_hash = @password_hash
     WHERE id = @id
   `).run({ ...next, id });
-  return getUserById(id);
+  const updated = getUserById(id);
+  persistAccounts();
+  return updated;
 }
 
 function deleteUser(id) {
@@ -252,6 +337,7 @@ function deleteUser(id) {
     dbx.prepare("DELETE FROM users WHERE id = ?").run(id);
   });
   tx();
+  persistAccounts();
   return { ok: true };
 }
 
@@ -285,11 +371,15 @@ function addChannel({ userId, platform, channelId, label }) {
     INSERT INTO approved_channels (user_id, platform, channel_id, label, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(userId, platform, String(channelId).trim(), label || "", now());
-  return open().prepare("SELECT * FROM approved_channels WHERE id = ?").get(result.lastInsertRowid);
+  const channel = open().prepare("SELECT * FROM approved_channels WHERE id = ?").get(result.lastInsertRowid);
+  persistAccounts();
+  return channel;
 }
 
 function removeChannel(id) {
-  return open().prepare("DELETE FROM approved_channels WHERE id = ?").run(id);
+  const result = open().prepare("DELETE FROM approved_channels WHERE id = ?").run(id);
+  persistAccounts();
+  return result;
 }
 
 function createLiveSession({ id, userId, platform, channelId }) {
@@ -473,6 +563,9 @@ module.exports = {
   createUser,
   updateUser,
   deleteUser,
+  persistAccounts,
+  snapshotAccounts,
+  importAccountBackup,
   listChannels,
   findApprovedChannel,
   findApprovedChannelAny,

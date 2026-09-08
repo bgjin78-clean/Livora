@@ -150,6 +150,15 @@
               <button id="addUserBtn" class="gold-btn" type="button">계정 생성</button>
               <button id="cancelEditBtn" class="ghost-btn hidden" type="button">취소</button>
             </div>
+            <p class="register-hint">계정은 서버에 누적 저장됩니다. 배포 후에도 남기려면 아래 복구 파일을 PC에 받아 두세요.</p>
+            <div class="form-actions">
+              <button id="accountListBtn" class="ghost-btn" type="button">아이디 목록 받기</button>
+              <button id="accountBackupBtn" class="ghost-btn" type="button">복구 파일 받기</button>
+            </div>
+            <label class="file-upload">
+              <span>복구 파일 올리기</span>
+              <input id="accountRestoreFile" type="file" accept="application/json,.json" />
+            </label>
             <div id="userList" class="stack-list"></div>
           </article>
           <article class="panel">

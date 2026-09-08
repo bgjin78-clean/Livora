@@ -621,6 +621,43 @@ $("addUserBtn").onclick = async () => {
 
 $("cancelEditBtn").onclick = resetUserForm;
 
+$("accountListBtn").onclick = async () => {
+  try {
+    await downloadFile("/api/admin/accounts.csv", "livora-accounts.csv");
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+$("accountBackupBtn").onclick = async () => {
+  try {
+    const data = await api("/api/admin/accounts-backup");
+    const blob = new Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
+    const fileUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = fileUrl;
+    a.download = `livora-accounts-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(fileUrl);
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+$("accountRestoreFile").onchange = async (ev) => {
+  const file = ev.target.files?.[0];
+  ev.target.value = "";
+  if (!file) return;
+  try {
+    const backup = JSON.parse(await file.text());
+    const data = await api("/api/admin/accounts-restore", { method: "POST", body: { backup } });
+    alert(`${data.added || 0}개 계정을 복구했습니다.`);
+    await loadAdmin();
+  } catch (err) {
+    alert(err.message || "복구 파일을 읽지 못했습니다.");
+  }
+};
+
 $("userList").addEventListener("click", async (e) => {
   const editId = e.target.dataset.edit;
   const delId = e.target.dataset.del;

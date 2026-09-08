@@ -14,6 +14,8 @@ COPY . .
 
 ENV NODE_ENV=production
 ENV PORT=4173
+ENV DATA_DIR=/app/data
+VOLUME /app/data
 EXPOSE 4173
 
 CMD ["node", "src/index.js"]

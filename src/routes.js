@@ -89,6 +89,36 @@ function createRouter(broadcast) {
     res.json({ ok: true });
   });
 
+  router.get("/admin/accounts.csv", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    const rows = [
+      ["아이디", "이름", "역할", "상태", "만료일"],
+      ...db.listUsers().map((user) => [
+        user.username,
+        user.name,
+        user.role,
+        user.status,
+        user.expire_date || ""
+      ])
+    ];
+    const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", "attachment; filename=livora-accounts.csv");
+    res.send(`\uFEFF${csv}`);
+  });
+
+  router.get("/admin/accounts-backup", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    db.persistAccounts();
+    res.json({ ok: true, backup: db.snapshotAccounts() });
+  });
+
+  router.post("/admin/accounts-restore", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    const backup = req.body?.backup || req.body;
+    if (!backup?.users || !Array.isArray(backup.users)) {
+      return res.status(400).json({ ok: false, message: "복구 파일 형식이 올바르지 않습니다." });
+    }
+    res.json(db.importAccountBackup(backup));
+  });
+
   router.get("/admin/users/:id/data", auth.requireAuth, auth.requireAdmin, (req, res) => {
     const user = db.getUserById(Number(req.params.id));
     if (!user) return res.status(404).json({ ok: false, message: "사용자를 찾지 못했습니다." });
