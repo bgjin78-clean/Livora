@@ -30,8 +30,53 @@ const QTY_WORDS = {
   다섯: 5, 여섯: 6, 일곱: 7, 여덟: 8, 아홉: 9, 열: 10
 };
 
-const ORDER_KEYWORD_RE = /(주세요|주문요|주문|구매요|구매|살게요|살게|할게요|할게|할께요|할께|하나요|하나|한개|한장|두개|두장|세개|세장)/u;
-const ORDER_INTENT_RE = /(주세요|주문|구매|살게|살게요|할게|할게요|할께|할께요|하나|한개|한장|두개|두장|세개|세장|개|장)/u;
+const ORDER_PHRASES = [
+  "부탁드릴께요", "부탁드릴게요", "부탁드려요", "부탁드려용", "부탁할게요", "부탁할께",
+  "부탁합니다", "부탁해요", "부탁해용", "부탁해여", "부탁해", "부탁",
+  "보내주세요", "사주세요", "시켜주세요", "담아주세요", "시킬게요",
+  "결제할게요", "결제할께요", "결제해요", "결제요",
+  "신청할게요", "신청해요",
+  "주문할게요", "주문할께요", "주문해요", "주문합니다", "주문요", "주문",
+  "구매할게요", "구매해요", "구매합니다", "구매요", "구매",
+  "살게요", "살께요", "살게여", "살게용", "살게",
+  "할게요", "할께요", "할께여", "할게", "할께",
+  "주세요", "주세용", "주세여", "주셔요",
+  "하나요", "한개", "한장", "두개", "두장", "세개", "세장", "하나"
+];
+
+const NON_ORDER_PHRASES = [
+  "입어보고싶어요", "입어보고싶어용", "입어보고싶어",
+  "가지고싶어요", "가지고싶어용", "가지고싶어여", "가지고싶어", "가지고싶다",
+  "갖고싶어요", "갖고싶어용", "갖고싶어여", "갖고싶어", "갖고싶다",
+  "사고싶어요", "사고싶어용", "사고싶어여", "사고싶어",
+  "입고싶어요", "입고싶어용", "입고싶어",
+  "보여주세요", "보여주세용", "보여주세여", "보여줘요", "보여줄래요", "보여줄래", "보여주",
+  "알려주세요", "알려줘요", "알려줄래",
+  "설명해주세요"
+];
+
+const ORDER_SUFFIX_PHRASES = [
+  "부탁드릴께요", "부탁드릴게요", "부탁드려요", "부탁드려용", "부탁할게요",
+  "부탁합니다", "부탁해요", "부탁해용", "부탁해여", "부탁해", "부탁",
+  "보내주세요", "사주세요", "주세요", "주세용", "주세여",
+  "주문요", "주문", "이요", "요"
+];
+
+function phrasePattern(phrases) {
+  return phrases
+    .slice()
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegex)
+    .join("|");
+}
+
+const ORDER_KEYWORD_RE = new RegExp(`(${phrasePattern(ORDER_PHRASES)})`, "u");
+const ORDER_INTENT_RE = new RegExp(`(${phrasePattern([...ORDER_PHRASES, "개", "장"])})`, "u");
+const ORDER_SUFFIX_PATTERN = `(?:${phrasePattern(ORDER_SUFFIX_PHRASES)})?`;
+const COLOR_SIZE_TRAILING_RE = new RegExp(
+  `(${phrasePattern([...ORDER_PHRASES, "사이즈", "컬러", "색상", "색", "번", "요", "개", "장"])})`,
+  "g"
+);
 const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도/u;
 const CANCEL_WORDS = ["취소", "삭제", "빼주세요", "빼", "안할게"];
 const FOLLOW_WORDS = ["저두요", "저도요", "저요", "주문요", "나도요", "나두요", "ㅈㅇ"];
@@ -46,6 +91,39 @@ function normalizeCompact(text) {
 
 function escapeRegex(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removePhrases(text, phrases) {
+  let work = String(text || "");
+  for (const phrase of phrases.slice().sort((a, b) => b.length - a.length)) {
+    work = work.split(phrase).join("");
+  }
+  return work;
+}
+
+function compactForIntent(text) {
+  return normalizeCompact(text).replace(/[~!.,?？♡♥❤]/g, "");
+}
+
+function hasOrderKeyword(text) {
+  return ORDER_KEYWORD_RE.test(removePhrases(compactForIntent(text), NON_ORDER_PHRASES));
+}
+
+function isBrowseDesireOnly(text) {
+  const compact = compactForIntent(text);
+  if (!compact) return false;
+  return !removePhrases(compact, NON_ORDER_PHRASES);
+}
+
+function isNonPurchaseRequest(text) {
+  const compact = compactForIntent(text);
+  const withoutBrowse = removePhrases(compact, NON_ORDER_PHRASES);
+  if (withoutBrowse === compact) return false;
+  return !ORDER_KEYWORD_RE.test(withoutBrowse);
+}
+
+function stripIntentWords(text) {
+  return removePhrases(String(text || "").replace(/[@.,!?\s]/g, ""), [...ORDER_PHRASES, "번"]);
 }
 
 function toMoney(v) {
@@ -318,10 +396,10 @@ function parseColorSizeQtyList(text, { allowBareNumber = false, allowKeywordOnly
     });
   }
 
-  work = work.replace(/(주세요|주문요|주문|구매요|구매|살게요|살게|할게요|할게|할께요|할께|하나요|한개|한장|두개|두장|세개|세장|사이즈|컬러|색상|색|번|요|개|장)/g, "");
+  work = work.replace(COLOR_SIZE_TRAILING_RE, "");
   if (work) return null;
   if (!items.length) {
-    if (allowKeywordOnly && ORDER_KEYWORD_RE.test(raw)) return [{ color: "", size: "", qty: extractFlexibleQty(raw, 1) }];
+    if (allowKeywordOnly && hasOrderKeyword(raw)) return [{ color: "", size: "", qty: extractFlexibleQty(raw, 1) }];
     return null;
   }
   return items;
@@ -351,11 +429,18 @@ function getOrderKey(orderObj) {
 module.exports = {
   COLORS,
   SIZE_ALIAS,
+  ORDER_PHRASES,
+  NON_ORDER_PHRASES,
   ORDER_KEYWORD_RE,
   ORDER_INTENT_RE,
+  ORDER_SUFFIX_PATTERN,
   QUESTION_RE,
   CANCEL_WORDS,
   FOLLOW_WORDS,
+  hasOrderKeyword,
+  isBrowseDesireOnly,
+  isNonPurchaseRequest,
+  stripIntentWords,
   normalizeText,
   normalizeCompact,
   escapeRegex,

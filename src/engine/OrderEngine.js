@@ -2,14 +2,17 @@ const db = require("../db");
 const {
   COLORS,
   SIZE_ALIAS,
-  ORDER_KEYWORD_RE,
-  ORDER_INTENT_RE,
+  ORDER_SUFFIX_PATTERN,
   QUESTION_RE,
   CANCEL_WORDS,
   FOLLOW_WORDS,
   normalizeText,
   normalizeCompact,
   escapeRegex,
+  hasOrderKeyword,
+  isBrowseDesireOnly,
+  isNonPurchaseRequest,
+  stripIntentWords,
   now,
   makeChatId,
   normalizeOptionToSize,
@@ -133,10 +136,11 @@ class OrderEngine {
         return { product: num, option: size, color: "", size, qty: extractFlexibleQty(tail, 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
       }
     }
-    if (ORDER_KEYWORD_RE.test(tail) || (tail && hasExplicitQty(tail))) {
+    if (isBrowseDesireOnly(tail)) return null;
+    if (hasOrderKeyword(tail) || (tail && hasExplicitQty(tail))) {
       return { product: num, option: "", color: "", size: "", qty: extractFlexibleQty(tail, 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
     }
-    const cleaned = text.replace(/[@.,!?\s]/g, "").replace(/번|요|주문|주세요/g, "");
+    const cleaned = stripIntentWords(text);
     if (cleaned === num) {
       return { product: num, option: "", color: "", size: "", qty: 1, price: reg.price || 0, shotFile: reg.shotFile || "" };
     }
@@ -150,13 +154,19 @@ class OrderEngine {
     const productCompact = normalizeCompact(product);
     const escProduct = escapeRegex(product);
     const escProductCompact = escapeRegex(productCompact);
-    if (new RegExp(`^${escProductCompact}(이요|요|주세요|주문)?[!?,.]*$`, "u").test(compact)) {
+    if (new RegExp(`^${escProductCompact}${ORDER_SUFFIX_PATTERN}[!?,.]*$`, "u").test(compact)) {
       return { product, option: "", color: "", size: "", qty: 1, price: reg.price || 0, shotFile: reg.shotFile || "" };
     }
     let m = text.match(new RegExp(`^\\s*${escProduct}(?:\\s*|\\s*-\\s*)(.+)$`, "u"));
-    if (m?.[1]) return { product, option: "", color: "", size: "", qty: extractFlexibleQty(m[1], 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
+    if (m?.[1]) {
+      if (isBrowseDesireOnly(m[1])) return null;
+      return { product, option: "", color: "", size: "", qty: extractFlexibleQty(m[1], 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
+    }
     m = compact.match(new RegExp(`^${escProductCompact}(.+)$`, "u"));
-    if (m?.[1]) return { product, option: "", color: "", size: "", qty: extractFlexibleQty(m[1], 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
+    if (m?.[1]) {
+      if (isBrowseDesireOnly(m[1])) return null;
+      return { product, option: "", color: "", size: "", qty: extractFlexibleQty(m[1], 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
+    }
     return null;
   }
 
@@ -182,15 +192,24 @@ class OrderEngine {
       const escOptCompact = compactAliases.map(escapeRegex).join("|");
       const escProduct = escapeRegex(reg.product);
       const escProductCompact = escapeRegex(productCompact);
-      if (new RegExp(`^\\.?${escOptCompact}\\.?((번)?(이요|요)?|주세요|주문)?[!?,.]*$`, "u").test(compact)) {
+      if (new RegExp(`^\\.?${escOptCompact}\\.?((번)?${ORDER_SUFFIX_PATTERN})[!?,.]*$`, "u").test(compact)) {
         return this.buildOptionOrder(reg, opt, 1);
       }
       let m = text.match(new RegExp(`^\\s*(?:${escOpt})(?:번)?(?:\\s*|\\s*-\\s*)(.+)$`, "u"));
-      if (m?.[1]) return this.buildOptionOrder(reg, opt, extractFlexibleQty(m[1], 1));
+      if (m?.[1]) {
+        if (isBrowseDesireOnly(m[1])) continue;
+        return this.buildOptionOrder(reg, opt, extractFlexibleQty(m[1], 1));
+      }
       m = text.match(new RegExp(`^\\s*${escProduct}\\s*(?:${escOpt})(?:번)?(?:\\s*|\\s*-\\s*)(.*)$`, "u"));
-      if (m) return this.buildOptionOrder(reg, opt, extractFlexibleQty(m[1], 1));
+      if (m) {
+        if (isBrowseDesireOnly(m[1])) continue;
+        return this.buildOptionOrder(reg, opt, extractFlexibleQty(m[1], 1));
+      }
       m = compact.match(new RegExp(`^${escProductCompact}(?:${escOptCompact})(.*)$`, "u"));
-      if (m) return this.buildOptionOrder(reg, opt, extractFlexibleQty(m[1], 1));
+      if (m) {
+        if (isBrowseDesireOnly(m[1])) continue;
+        return this.buildOptionOrder(reg, opt, extractFlexibleQty(m[1], 1));
+      }
     }
 
     const headMatch = text.match(new RegExp(`^\\s*${escapeRegex(reg.product)}(?:번)?\\s*(.*)$`, "u"));
@@ -202,7 +221,8 @@ class OrderEngine {
         return this.buildOptionOrder(reg, opt, extractFlexibleQty(tail, 1));
       }
     }
-    if (!tail || ORDER_KEYWORD_RE.test(tail) || hasExplicitQty(tail)) {
+    if (isBrowseDesireOnly(tail)) return null;
+    if (!tail || hasOrderKeyword(tail) || hasExplicitQty(tail)) {
       return {
         product: reg.product,
         option: "",
@@ -219,7 +239,7 @@ class OrderEngine {
   parseQtyModeOrders(msg) {
     const text = normalizeText(msg);
     if (!this.qtyMode.enabled || !this.qtyMode.product || !text) return null;
-    if (QUESTION_RE.test(text) && !ORDER_INTENT_RE.test(text)) return null;
+    if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return null;
     const items = parseColorSizeQtyList(text, { allowBareNumber: true, allowKeywordOnly: true });
     if (!items || !items.length) return null;
     return items.map((item) => this.toCurrentProductOrder(item, true));
@@ -228,7 +248,7 @@ class OrderEngine {
   parseCurrentProductShorthandList(msg) {
     const text = normalizeText(msg);
     if (!this.qtyMode.product || !text) return null;
-    if (QUESTION_RE.test(text) && !ORDER_INTENT_RE.test(text)) return null;
+    if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return null;
     const items = parseColorSizeQtyList(text, { allowBareNumber: false, allowKeywordOnly: false });
     if (!items || !items.length) return null;
     return items.map((item) => this.toCurrentProductOrder(item, false));
@@ -251,8 +271,9 @@ class OrderEngine {
   parseMessageToOrders(msg) {
     const text = normalizeText(msg);
     if (!text) return [];
-    if (QUESTION_RE.test(text) && !ORDER_INTENT_RE.test(text)) return [];
-    if (isManagerStyleMessage(text) && !/\d/.test(text) && !ORDER_INTENT_RE.test(text)) return [];
+    if (isNonPurchaseRequest(text) || isBrowseDesireOnly(text)) return [];
+    if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return [];
+    if (isManagerStyleMessage(text) && !/\d/.test(text) && !hasOrderKeyword(text)) return [];
     const qtyModeParsed = this.parseQtyModeOrders(text);
     if (qtyModeParsed) return qtyModeParsed.map((item) => this.applyDefaultQty(this.withMatch(item, "qty-mode", text), text));
     const shorthand = this.parseCurrentProductShorthandList(text);
