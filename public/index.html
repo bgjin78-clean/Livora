@@ -14,25 +14,26 @@
     <section class="login-story">
       <p class="eyebrow">LIVE COMMERCE DESK</p>
       <h1>Livora</h1>
-      <p class="lede">승인된 틱톡·유튜브만 연결되는<br />서버형 라이브 주문 데스크</p>
+      <p class="lede">받은 아이디로 들어가<br />라이브 주문을 받습니다</p>
       <ul>
-        <li>설치 없이 브라우저에서 실행</li>
-        <li>승인된 채널만 수집</li>
-        <li>주문·엑셀·채팅 캡처를 서버에 보관</li>
+        <li>설치 없이 인터넷 주소만 열면 됩니다</li>
+        <li>관리자가 알려 준 아이디로 로그인합니다</li>
+        <li>폰·컴퓨터 브라우저에서 바로 사용합니다</li>
       </ul>
     </section>
     <section class="login-card">
       <p class="eyebrow">WELCOME</p>
-      <h2>계정으로 입장</h2>
+      <h2>로그인</h2>
+      <p class="lede small">관리자에게 받은 아이디와 비밀번호를 입력하세요.</p>
       <label>
         <span>아이디</span>
-        <input id="loginId" type="text" autocomplete="username" />
+        <input id="loginId" type="text" autocomplete="username" placeholder="받은 아이디" />
       </label>
       <label>
         <span>비밀번호</span>
-        <input id="loginPw" type="password" autocomplete="current-password" />
+        <input id="loginPw" type="password" autocomplete="current-password" placeholder="받은 비밀번호" />
       </label>
-      <button id="loginBtn" class="gold-btn" type="button">Livora 시작</button>
+      <button id="loginBtn" class="gold-btn" type="button">들어가기</button>
       <p id="loginError" class="error"></p>
     </section>
   </div>
@@ -150,8 +151,8 @@
               <option value="tiktok">TikTok</option>
               <option value="youtube">YouTube</option>
             </select>
-            <input id="channelId" placeholder="틱톡ID 또는 유튜브 채널/라이브" />
-            <input id="channelLabel" placeholder="표시 이름" />
+            <input id="channelId" placeholder="틱톡 아이디 또는 유튜브 라이브 주소" />
+            <input id="channelLabel" placeholder="화면에 보일 이름" />
             <button id="addChannelBtn" class="mint-btn" type="button">승인 추가</button>
             <div id="channelList" class="stack-list"></div>
           </article>

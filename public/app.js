@@ -86,7 +86,8 @@ function renderChannelIds() {
   $("channelSelect").innerHTML = unique.length
     ? unique.map((c) => {
       const owner = c.username || c.user_name || "";
-      const label = isAdmin && owner ? `${c.channel_id} · ${owner}` : c.channel_id;
+      const title = c.label || c.channel_id;
+      const label = isAdmin && owner ? `${title} · ${owner}` : title;
       return `<option value="${escapeAttr(c.channel_id)}">${escapeAttr(label)}</option>`;
     }).join("")
     : `<option value="">승인된 ID 없음</option>`;
@@ -207,7 +208,7 @@ function connectWs() {
     }
     if (msg.type === "status") {
       if (msg.payload.status === "connected") $("liveBadge").textContent = "LIVE";
-      if (msg.payload.status === "error") $("liveBadge").textContent = msg.payload.error || "오류";
+      if (msg.payload.status === "error") $("liveBadge").textContent = String(msg.payload.error || "오류").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
     }
     if (msg.type === "product") {
       upsertProduct(msg.payload);
