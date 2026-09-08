@@ -43,12 +43,12 @@ function createRouter(broadcast) {
   });
 
   router.post("/admin/users", auth.requireAuth, auth.requireAdmin, (req, res) => {
-    const { username, password, name, role, expireDate } = req.body || {};
+    const { username, password, name, role, expireDate, status } = req.body || {};
     if (!username || !password) {
       return res.status(400).json({ ok: false, message: "아이디와 비밀번호가 필요합니다." });
     }
     try {
-      const user = db.createUser({ username, password, name, role, expireDate });
+      const user = db.createUser({ username, password, name, role, expireDate, status });
       res.json({ ok: true, user });
     } catch {
       res.status(400).json({ ok: false, message: "이미 있는 아이디입니다." });
@@ -56,9 +56,55 @@ function createRouter(broadcast) {
   });
 
   router.patch("/admin/users/:id", auth.requireAuth, auth.requireAdmin, (req, res) => {
-    const user = db.updateUser(Number(req.params.id), req.body || {});
+    try {
+      const user = db.updateUser(Number(req.params.id), req.body || {});
+      if (!user) return res.status(404).json({ ok: false, message: "사용자를 찾지 못했습니다." });
+      res.json({ ok: true, user: auth.publicUser(user) });
+    } catch (err) {
+      const message = String(err?.message || "");
+      if (/UNIQUE|already/i.test(message)) {
+        return res.status(400).json({ ok: false, message: "이미 있는 아이디입니다." });
+      }
+      res.status(400).json({ ok: false, message: message || "수정하지 못했습니다." });
+    }
+  });
+
+  router.delete("/admin/users/:id", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    const id = Number(req.params.id);
+    if (id === req.user.id) {
+      return res.status(400).json({ ok: false, message: "지금 로그인 중인 계정은 삭제할 수 없습니다." });
+    }
+    const live = collector.getUserSession(id);
+    if (live) await collector.stopSession(live.id);
+    const result = db.deleteUser(id);
+    if (!result.ok) return res.status(400).json(result);
+    res.json({ ok: true });
+  });
+
+  router.get("/admin/users/:id/data", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    const user = db.getUserById(Number(req.params.id));
     if (!user) return res.status(404).json({ ok: false, message: "사용자를 찾지 못했습니다." });
-    res.json({ ok: true, user: auth.publicUser(user) });
+    const sessions = db.listLiveSessionsWithCounts(user.id);
+    const requested = String(req.query.sessionId || "").trim();
+    const session = requested
+      ? sessions.find((row) => row.id === requested) || null
+      : sessions[0] || null;
+    res.json({
+      ok: true,
+      user: auth.publicUser(user),
+      channels: db.listChannels(user.id),
+      sessions,
+      session,
+      orders: session ? db.listOrders(session.id) : [],
+      chats: session ? db.listChats(session.id, 80) : []
+    });
+  });
+
+  router.get("/admin/users/:id/export/chats", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    const user = db.getUserById(Number(req.params.id));
+    if (!user) return res.status(404).json({ ok: false, message: "사용자를 찾지 못했습니다." });
+    const filePath = await writeUserDayChatExcel(user.id);
+    res.download(filePath, `${user.username}-chats.xlsx`);
   });
 
   router.get("/admin/channels", auth.requireAuth, auth.requireAdmin, (req, res) => {

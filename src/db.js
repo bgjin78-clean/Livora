@@ -189,37 +189,70 @@ function listUsers() {
   `).all();
 }
 
-function createUser({ username, password, name, role, expireDate }) {
+function createUser({ username, password, name, role, expireDate, status }) {
   const result = open().prepare(`
     INSERT INTO users (username, password_hash, name, role, status, expire_date, created_at)
-    VALUES (?, ?, ?, ?, 'active', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     username,
     bcrypt.hashSync(password, 10),
     name || username,
     role || "seller",
+    status === "stopped" ? "stopped" : "active",
     expireDate || "2028-12-31",
     now()
   );
   return getUserById(result.lastInsertRowid);
 }
 
+function countAdmins() {
+  return open().prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'admin'").get().n;
+}
+
 function updateUser(id, patch) {
   const user = getUserById(id);
   if (!user) return null;
   const next = {
+    username: String(patch.username ?? user.username).trim(),
     name: patch.name ?? user.name,
     role: patch.role ?? user.role,
     status: patch.status ?? user.status,
-    expire_date: patch.expireDate ?? user.expire_date,
+    expire_date: patch.expireDate === undefined ? user.expire_date : (patch.expireDate || "2028-12-31"),
     password_hash: patch.password ? bcrypt.hashSync(patch.password, 10) : user.password_hash
   };
+  if (!next.username) throw new Error("아이디가 필요합니다.");
+  if (user.role === "admin" && next.role !== "admin" && countAdmins() <= 1) {
+    throw new Error("마지막 관리자의 역할은 바꿀 수 없습니다.");
+  }
   open().prepare(`
     UPDATE users
-    SET name = @name, role = @role, status = @status, expire_date = @expire_date, password_hash = @password_hash
+    SET username = @username, name = @name, role = @role, status = @status, expire_date = @expire_date, password_hash = @password_hash
     WHERE id = @id
   `).run({ ...next, id });
   return getUserById(id);
+}
+
+function deleteUser(id) {
+  const user = getUserById(id);
+  if (!user) return { ok: false, message: "사용자를 찾지 못했습니다." };
+  if (user.role === "admin" && countAdmins() <= 1) {
+    return { ok: false, message: "마지막 관리자는 삭제할 수 없습니다." };
+  }
+  const dbx = open();
+  const sessions = dbx.prepare("SELECT id FROM live_sessions WHERE user_id = ?").all(id);
+  const tx = dbx.transaction(() => {
+    for (const session of sessions) {
+      dbx.prepare("DELETE FROM chats WHERE session_id = ?").run(session.id);
+      dbx.prepare("DELETE FROM orders WHERE session_id = ?").run(session.id);
+      dbx.prepare("DELETE FROM products WHERE session_id = ?").run(session.id);
+      dbx.prepare("DELETE FROM aliases WHERE session_id = ?").run(session.id);
+    }
+    dbx.prepare("DELETE FROM live_sessions WHERE user_id = ?").run(id);
+    dbx.prepare("DELETE FROM approved_channels WHERE user_id = ?").run(id);
+    dbx.prepare("DELETE FROM users WHERE id = ?").run(id);
+  });
+  tx();
+  return { ok: true };
 }
 
 function listChannels(userId) {
@@ -292,6 +325,18 @@ function listLiveSessions(userId) {
     `).all(userId);
   }
   return open().prepare("SELECT * FROM live_sessions ORDER BY started_at DESC LIMIT 50").all();
+}
+
+function listLiveSessionsWithCounts(userId) {
+  return open().prepare(`
+    SELECT s.*,
+      (SELECT COUNT(*) FROM orders WHERE session_id = s.id) AS order_count,
+      (SELECT COUNT(*) FROM chats WHERE session_id = s.id) AS chat_count
+    FROM live_sessions s
+    WHERE s.user_id = ?
+    ORDER BY s.started_at DESC
+    LIMIT 50
+  `).all(userId);
 }
 
 function insertProduct(row) {
@@ -427,6 +472,7 @@ module.exports = {
   listUsers,
   createUser,
   updateUser,
+  deleteUser,
   listChannels,
   findApprovedChannel,
   findApprovedChannelAny,
@@ -436,6 +482,7 @@ module.exports = {
   updateLiveSession,
   getLiveSession,
   listLiveSessions,
+  listLiveSessionsWithCounts,
   insertProduct,
   deleteProduct,
   deleteAliasesForProduct,

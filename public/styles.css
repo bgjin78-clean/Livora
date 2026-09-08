@@ -183,6 +183,12 @@ th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--li
   font-size: 13px;
 }
 .stack-item button { background: transparent; color: var(--danger); border: 0; cursor: pointer; }
+.stack-item button.edit-btn { color: var(--gold); }
+.form-actions { display: flex; gap: 8px; margin: 8px 0 0; }
+.form-actions button { width: auto; flex: 1; }
+.admin-data { grid-column: 1 / -1; min-height: 0; }
+.admin-data h4 { margin: 8px 0; font-size: 14px; color: var(--muted); }
+.admin-data .feed { height: 280px; }
 
 @media (max-width: 960px) {
   .login-shell, .app-shell, .desk-grid, .admin-grid, .stats { grid-template-columns: 1fr; }

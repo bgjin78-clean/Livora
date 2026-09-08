@@ -5,7 +5,9 @@ const state = {
   chats: [],
   orders: [],
   products: [],
-  guessOnly: false
+  guessOnly: false,
+  editingUserId: null,
+  adminUsers: []
 };
 
 const $ = (id) => document.getElementById(id);
@@ -250,16 +252,90 @@ async function bootApp() {
 async function loadAdmin() {
   const users = await api("/api/admin/users");
   const channels = await api("/api/admin/channels");
-  $("channelUser").innerHTML = users.users.map((u) => `<option value="${u.id}">${u.username}</option>`).join("");
-  $("userList").innerHTML = users.users.map((u) => `
-    <div class="stack-item"><span>${u.username} · ${u.role} · ${u.status}</span></div>
+  state.adminUsers = users.users || [];
+  $("channelUser").innerHTML = state.adminUsers.map((u) => `<option value="${u.id}">${escapeAttr(u.username)}</option>`).join("");
+  $("sellerDataUser").innerHTML = state.adminUsers
+    .filter((u) => u.role === "seller")
+    .map((u) => `<option value="${u.id}">${escapeAttr(u.name || u.username)} (${escapeAttr(u.username)})</option>`)
+    .join("") || `<option value="">판매자 없음</option>`;
+  $("userList").innerHTML = state.adminUsers.map((u) => `
+    <div class="stack-item">
+      <span>${escapeAttr(u.username)} · ${escapeAttr(u.role)} · ${escapeAttr(u.status)}</span>
+      <span>
+        <button class="edit-btn" type="button" data-edit="${u.id}">수정</button>
+        <button type="button" data-del="${u.id}">삭제</button>
+      </span>
+    </div>
   `).join("");
   $("channelList").innerHTML = channels.channels.map((c) => `
     <div class="stack-item">
-      <span>${c.username} · ${c.platform} · ${c.channel_id}</span>
+      <span>${escapeAttr(c.username)} · ${escapeAttr(c.platform)} · ${escapeAttr(c.channel_id)}</span>
       <button data-id="${c.id}">삭제</button>
     </div>
   `).join("");
+  if ($("sellerDataUser").value) loadSellerData();
+}
+
+function resetUserForm() {
+  state.editingUserId = null;
+  $("newUser").value = "";
+  $("newPass").value = "";
+  $("newPass").placeholder = "비밀번호";
+  $("newName").value = "";
+  $("newRole").value = "seller";
+  $("newStatus").value = "active";
+  $("newExpire").value = "";
+  $("addUserBtn").textContent = "계정 생성";
+  $("cancelEditBtn").classList.add("hidden");
+}
+
+function fillUserForm(user) {
+  state.editingUserId = user.id;
+  $("newUser").value = user.username || "";
+  $("newPass").value = "";
+  $("newPass").placeholder = "비밀번호 (바꿀 때만 입력)";
+  $("newName").value = user.name || "";
+  $("newRole").value = user.role || "seller";
+  $("newStatus").value = user.status || "active";
+  $("newExpire").value = user.expire_date || "";
+  $("addUserBtn").textContent = "계정 저장";
+  $("cancelEditBtn").classList.remove("hidden");
+}
+
+function sessionLabel(row) {
+  const when = String(row.started_at || "").replace("T", " ").slice(0, 16);
+  return `${platformLabel(row.platform)} ${row.channel_id} · 주문 ${row.order_count || 0} · ${when}`;
+}
+
+async function loadSellerData() {
+  const userId = $("sellerDataUser").value;
+  if (!userId) {
+    $("sellerDataHint").textContent = "셀러를 선택하세요.";
+    $("sellerDataSession").innerHTML = "";
+    $("sellerOrderList").innerHTML = "";
+    $("sellerChatList").innerHTML = "";
+    return;
+  }
+  const prev = $("sellerDataSession").value;
+  const data = await api(`/api/admin/users/${userId}/data${prev ? `?sessionId=${encodeURIComponent(prev)}` : ""}`);
+  $("sellerDataSession").innerHTML = (data.sessions || []).length
+    ? data.sessions.map((row) => `<option value="${escapeAttr(row.id)}">${escapeAttr(sessionLabel(row))}</option>`).join("")
+    : `<option value="">방송 기록 없음</option>`;
+  if (data.session?.id) $("sellerDataSession").value = data.session.id;
+  const channels = (data.channels || []).map((c) => `${platformLabel(c.platform)} ${c.label || c.channel_id}`).join(", ");
+  $("sellerDataHint").textContent = data.session
+    ? `채널: ${channels || "없음"} · 이 방송 주문 ${data.orders.length}건, 채팅 ${data.chats.length}건`
+    : `채널: ${channels || "없음"} · 아직 수집한 방송이 없습니다.`;
+  $("sellerOrderList").innerHTML = (data.orders || []).length
+    ? data.orders.slice(0, 80).map((o) => `
+        <div class="order-row"><b>${escapeAttr(o.nick || "")}</b>${escapeAttr(o.product || "")} ${escapeAttr(o.option_name || o.color || "")} ${o.qty || 0}개</div>
+      `).join("")
+    : `<div class="order-row">주문이 없습니다.</div>`;
+  $("sellerChatList").innerHTML = (data.chats || []).length
+    ? data.chats.slice().reverse().map((c) => `
+        <div class="chat-row ${c.is_order ? "order" : ""}"><b>${escapeAttr(c.nick || "")}</b>${escapeAttr(c.msg || "")}</div>
+      `).join("")
+    : `<div class="chat-row">채팅이 없습니다.</div>`;
 }
 
 $("loginPw").addEventListener("keydown", (e) => {
@@ -492,18 +568,49 @@ $("invoiceBtn").onclick = async () => {
 };
 
 $("addUserBtn").onclick = async () => {
-  await api("/api/admin/users", {
-    method: "POST",
-    body: {
+  try {
+    const body = {
       username: $("newUser").value,
-      password: $("newPass").value,
       name: $("newName").value,
       role: $("newRole").value,
+      status: $("newStatus").value,
       expireDate: $("newExpire").value
+    };
+    if ($("newPass").value) body.password = $("newPass").value;
+    if (state.editingUserId) {
+      await api(`/api/admin/users/${state.editingUserId}`, { method: "PATCH", body });
+    } else {
+      if (!body.password) return alert("비밀번호를 입력하세요.");
+      await api("/api/admin/users", { method: "POST", body });
     }
-  });
-  loadAdmin();
+    resetUserForm();
+    await loadAdmin();
+  } catch (err) {
+    alert(err.message);
+  }
 };
+
+$("cancelEditBtn").onclick = resetUserForm;
+
+$("userList").addEventListener("click", async (e) => {
+  const editId = e.target.dataset.edit;
+  const delId = e.target.dataset.del;
+  if (editId) {
+    const user = state.adminUsers.find((u) => String(u.id) === String(editId));
+    if (user) fillUserForm(user);
+    return;
+  }
+  if (!delId) return;
+  const user = state.adminUsers.find((u) => String(u.id) === String(delId));
+  if (!confirm(`${user?.username || "이 계정"}을 삭제할까요?\n채널 승인과 주문·채팅도 함께 삭제됩니다.`)) return;
+  try {
+    await api(`/api/admin/users/${delId}`, { method: "DELETE" });
+    if (String(state.editingUserId) === String(delId)) resetUserForm();
+    await loadAdmin();
+  } catch (err) {
+    alert(err.message);
+  }
+});
 
 $("addChannelBtn").onclick = async () => {
   await api("/api/admin/channels", {
@@ -517,6 +624,35 @@ $("addChannelBtn").onclick = async () => {
   });
   $("channelId").value = "";
   loadAdmin();
+};
+
+$("sellerDataUser").onchange = () => {
+  $("sellerDataSession").innerHTML = "";
+  loadSellerData().catch((err) => alert(err.message));
+};
+
+$("sellerDataSession").onchange = () => {
+  loadSellerData().catch((err) => alert(err.message));
+};
+
+$("sellerExcelBtn").onclick = async () => {
+  const sessionId = $("sellerDataSession").value;
+  if (!sessionId) return alert("방송 기록이 없습니다.");
+  try {
+    await downloadFile(`/api/sessions/${sessionId}/export/excel`, "livora-orders.xlsx");
+  } catch (err) {
+    alert(err.message);
+  }
+};
+
+$("sellerChatExcelBtn").onclick = async () => {
+  const userId = $("sellerDataUser").value;
+  if (!userId) return alert("셀러를 선택하세요.");
+  try {
+    await downloadFile(`/api/admin/users/${userId}/export/chats`, "livora-chats.xlsx");
+  } catch (err) {
+    alert(err.message);
+  }
 };
 
 $("channelList").addEventListener("click", async (e) => {
