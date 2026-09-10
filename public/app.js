@@ -50,7 +50,9 @@ function setPage(page) {
   };
   $("pageEyebrow").textContent = titles[page][0];
   $("pageTitle").textContent = titles[page][1];
-  if (page === "admin") loadAdminStats();
+  const showAdminStats = page === "admin" && state.user?.role === "admin";
+  $("adminOverview").classList.toggle("hidden", !showAdminStats);
+  if (showAdminStats) loadAdminStats();
 }
 
 function platformLabel(platform) {
@@ -257,7 +259,10 @@ async function bootApp() {
   setLastSession(data.session || data.lastSession);
   $("sideName").textContent = data.user.name;
   $("sideMeta").textContent = `${data.user.role} · ${data.user.expireDate || ""}`;
-  $("adminNavWrap").classList.toggle("hidden", data.user.role !== "admin");
+  const isAdmin = data.user.role === "admin";
+  document.body.classList.toggle("is-admin", isAdmin);
+  $("adminNavWrap").classList.toggle("hidden", !isAdmin);
+  $("adminOverview").classList.add("hidden");
   renderChannels();
   setLiveBadge();
   if (state.session) {

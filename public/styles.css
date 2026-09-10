@@ -176,6 +176,10 @@ main { padding: 28px 32px 40px; }
 .chat-row.order { outline: 1px solid rgba(232, 195, 122, 0.35); }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
 .admin-stats { grid-template-columns: repeat(4, 1fr); }
+body:not(.is-admin) #adminOverview,
+#adminPage.hidden #adminOverview {
+  display: none !important;
+}
 .stats article {
   background: var(--panel);
   border: 1px solid var(--line);
