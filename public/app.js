@@ -466,8 +466,12 @@ $("stopBtn").onclick = async () => {
 
 function productKey(p) {
   if (p?.key) return p.key;
-  if (p?.type === "number" || p?.number) return `N:${p.number}`;
-  if (p?.type === "option" || p?.options || p?.options_json) return `O:${p.product}`;
+  if (p?.type === "number" || (p?.number && !p?.options?.length)) return `N:${p.number}`;
+  const options = p?.options || [];
+  if (p?.type === "option" || options.length) {
+    const opts = options.map((opt) => String(opt || "").replace(/\s+/g, "").toLowerCase()).filter(Boolean).sort().join(".");
+    return `O:${p.product}:${opts}:${Number(p.price || 0)}`;
+  }
   return p?.product ? `P:${p.product}` : "";
 }
 
@@ -481,7 +485,9 @@ function upsertProduct(reg) {
 
 function applyProductState(products, qtyMode) {
   if (Array.isArray(products)) state.products = products.map((p) => ({ ...p, key: productKey(p) }));
-  const current = qtyMode?.product
+  const current = qtyMode?.key
+    ? state.products.find((p) => productKey(p) === qtyMode.key)
+    : qtyMode?.product
     ? state.products.find((p) => (p.product || p.number) === qtyMode.product)
     : null;
   setCurrentProduct(current, qtyMode);
@@ -499,13 +505,17 @@ function renderProductHistory(qtyMode) {
     const name = p.product || p.number || "";
     if (!name || seen.has(key || name)) continue;
     seen.add(key || name);
-    items.push({ ...p, key, name, current: name === current });
+    items.push({ ...p, key, name, current: (qtyMode?.key && key === qtyMode.key) || (!qtyMode?.key && name === current) });
   }
   el.innerHTML = items.map((p) => {
-    const extra = [p.sizes?.length ? p.sizes.join("/") : "", p.colors?.length ? p.colors.join("/") : ""].filter(Boolean).join(" ");
+    const extra = [
+      p.sizes?.length ? p.sizes.join("/") : (p.options || []).join("/"),
+      p.colors?.length ? p.colors.join("/") : "",
+      Number(p.price) ? `${Number(p.price).toLocaleString("ko-KR")}원` : ""
+    ].filter(Boolean).join(" ");
     return `
-      <span class="product-chip ${p.current ? "current" : ""}" data-key="${p.key}">
-        ${p.name}${extra ? ` ${extra}` : ""}${p.current ? " · 현재" : ""}
+      <span class="product-chip ${p.current ? "current" : ""}" data-key="${escapeAttr(p.key)}">
+        ${escapeAttr(p.name)}${extra ? ` ${escapeAttr(extra)}` : ""}${p.current ? " · 현재" : ""}
         <button type="button" data-remove="${p.key}">삭제</button>
       </span>`;
   }).join("");

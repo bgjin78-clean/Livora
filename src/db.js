@@ -443,7 +443,16 @@ function deleteProduct(sessionId, reg) {
       AND type = ?
       AND IFNULL(product, '') = ?
       AND IFNULL(number, '') = ?
-  `).run(sessionId, reg.type, reg.product || "", reg.number || "");
+      AND IFNULL(options_json, '[]') = ?
+      AND IFNULL(price, 0) = ?
+  `).run(
+    sessionId,
+    reg.type,
+    reg.product || "",
+    reg.number || "",
+    JSON.stringify(reg.options || []),
+    Number(reg.price || 0)
+  );
 }
 
 function deleteAliasesForProduct(sessionId, product) {

@@ -174,6 +174,11 @@ function getOptionAliases(opt) {
   if (raw === "100" || normalized === "l") add("100", "l", "large", "라지", "엘");
   if (raw === "105" || normalized === "xl") add("105", "xl", "xlarge", "엑라", "엑스라지");
   if (raw === "110" || normalized === "xxl") add("110", "xxl", "2xl", "xxlarge", "투엑라", "투엑스라지", "2엑라");
+  const weight = raw.match(/^(\d+(?:\.\d+)?)(kg|키로|킬로|근)$/i);
+  if (weight) {
+    const n = weight[1];
+    add(`${n}kg`, `${n}키로`, `${n}킬로`, `${n}근`);
+  }
   return Array.from(aliases);
 }
 
@@ -309,11 +314,19 @@ function parseRegistrationPayload(payload) {
   return null;
 }
 
+function optionKeyPart(reg) {
+  return (reg?.options || [])
+    .map((opt) => normalizeCompact(opt).toLowerCase())
+    .filter(Boolean)
+    .sort()
+    .join(".");
+}
+
 function registrationKey(reg) {
   if (!reg) return "";
   if (reg.type === "product") return `P:${reg.product}`;
   if (reg.type === "number") return `N:${reg.number}`;
-  if (reg.type === "option") return `O:${reg.product}`;
+  if (reg.type === "option") return `O:${reg.product}:${optionKeyPart(reg)}:${Number(reg.price || 0)}`;
   return "";
 }
 

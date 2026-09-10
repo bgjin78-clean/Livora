@@ -41,6 +41,7 @@ class OrderEngine {
     this.lastOrder = null;
     this.qtyMode = {
       enabled: false,
+      key: "",
       product: "",
       price: 0,
       stock: 0,
@@ -75,9 +76,36 @@ class OrderEngine {
   }
 
   findRegistrationByProduct(productName) {
-    return this.getAllRegistrations().find((reg) =>
+    const matches = this.getAllRegistrations().filter((reg) =>
       (reg.type === "product" || reg.type === "option") && reg.product === productName
-    ) || null;
+    );
+    if (!matches.length) return null;
+    if (this.qtyMode.key) {
+      const current = matches.find((reg) => reg.key === this.qtyMode.key);
+      if (current) return current;
+    }
+    return matches[0];
+  }
+
+  sameNameRegistrations(productName) {
+    return this.getAllRegistrations().filter((reg) =>
+      (reg.type === "product" || reg.type === "option") && reg.product === productName
+    );
+  }
+
+  isCurrentRegistration(reg) {
+    if (!reg) return false;
+    if (this.qtyMode.key && reg.key === this.qtyMode.key) return true;
+    const name = reg.type === "number" ? reg.number : reg.product;
+    if (!name || this.qtyMode.product !== name) return false;
+    return this.sameNameRegistrations(name).length <= 1;
+  }
+
+  messageMentionsOptions(text, options) {
+    const compact = normalizeCompact(text).toLowerCase();
+    return (options || []).some((opt) => {
+      return getOptionAliases(opt).some((alias) => compact.includes(normalizeCompact(alias).toLowerCase()));
+    });
   }
 
   buildOptionOrder(reg, opt, qty) {
@@ -180,7 +208,7 @@ class OrderEngine {
     return [...new Set(expanded)].sort((a, b) => b.length - a.length);
   }
 
-  parseOptionRegistrationOrder(reg, msg) {
+  parseOptionRegistrationOrder(reg, msg, { requireOption = false } = {}) {
     const text = normalizeText(msg);
     const compact = normalizeCompact(msg);
     const productCompact = normalizeCompact(reg.product);
@@ -222,12 +250,19 @@ class OrderEngine {
       }
     }
     if (isBrowseDesireOnly(tail)) return null;
-    if (!tail || hasOrderKeyword(tail) || hasExplicitQty(tail)) {
+    const siblings = this.sameNameRegistrations(reg.product).filter((other) => other.key !== reg.key);
+    const siblingOptions = siblings.flatMap((other) => other.options || []);
+    if (this.messageMentionsOptions(tail, siblingOptions) && !this.messageMentionsOptions(tail, options)) {
+      return null;
+    }
+    if (requireOption) return null;
+    const allowBareProduct = this.sameNameRegistrations(reg.product).length <= 1 || this.isCurrentRegistration(reg);
+    if (allowBareProduct && (!tail || hasOrderKeyword(tail) || hasExplicitQty(tail))) {
       return {
         product: reg.product,
-        option: "",
-        color: "",
-        size: "",
+        option: options.length === 1 ? options[0] : "",
+        color: options.length === 1 ? normalizeOptionToColor(options[0]) : "",
+        size: options.length === 1 ? normalizeOptionToSize(options[0]) : "",
         qty: extractFlexibleQty(tail, 1),
         price: reg.price || 0,
         shotFile: reg.shotFile || ""
@@ -255,12 +290,14 @@ class OrderEngine {
   }
 
   toCurrentProductOrder(parsed, fromQtyMode) {
-    const option = [parsed.color, parsed.size].filter(Boolean).join(" ");
+    const current = this.qtyMode.key ? this.registrations[this.qtyMode.key] : null;
+    const fallback = current?.options?.length === 1 ? current.options[0] : "";
+    const option = [parsed.color, parsed.size].filter(Boolean).join(" ") || fallback;
     return {
       product: this.qtyMode.product,
       option,
-      color: parsed.color || "",
-      size: parsed.size || "",
+      color: parsed.color || (fallback ? normalizeOptionToColor(fallback) : ""),
+      size: parsed.size || (fallback ? normalizeOptionToSize(fallback) : ""),
       qty: parsed.qty || 1,
       price: Number(this.qtyMode.price || 0),
       shotFile: this.qtyMode.shotFile || "",
@@ -273,7 +310,12 @@ class OrderEngine {
     if (!text) return [];
     if (isNonPurchaseRequest(text) || isBrowseDesireOnly(text)) return [];
     if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return [];
-    if (isManagerStyleMessage(text) && !/\d/.test(text) && !hasOrderKeyword(text)) return [];
+    const mentionsRegistered = this.getAllRegistrations().some((reg) => {
+      const name = reg.product || reg.number || "";
+      if (name && normalizeCompact(text).toLowerCase().includes(normalizeCompact(name).toLowerCase())) return true;
+      return reg.type === "option" && this.messageMentionsOptions(text, reg.options);
+    });
+    if (isManagerStyleMessage(text) && !/\d/.test(text) && !hasOrderKeyword(text) && !mentionsRegistered) return [];
     const qtyModeParsed = this.parseQtyModeOrders(text);
     if (qtyModeParsed) return qtyModeParsed.map((item) => this.applyDefaultQty(this.withMatch(item, "qty-mode", text), text));
     const shorthand = this.parseCurrentProductShorthandList(text);
@@ -283,13 +325,27 @@ class OrderEngine {
     }
     const aliasParsed = this.parseAliasOrder(text);
     if (aliasParsed) return [this.applyDefaultQty(this.withMatch(aliasParsed, "alias", text), text)];
+    const optionHits = [];
+    for (const reg of this.getAllRegistrations()) {
+      if (reg.type !== "option") continue;
+      const parsed = this.parseOptionRegistrationOrder(reg, text, { requireOption: true });
+      if (parsed?.option) optionHits.push(parsed);
+    }
+    if (optionHits.length) {
+      optionHits.sort((a, b) => String(b.option || "").length - String(a.option || "").length);
+      const parsed = optionHits[0];
+      const source = mentionsAssignedProduct(text, parsed.product) ? "named" : "option";
+      return [this.applyDefaultQty(this.withMatch(parsed, source, text), text)];
+    }
     for (const reg of this.getAllRegistrations()) {
       let parsed = null;
       if (reg.type === "number") parsed = this.parseNumberRegistrationOrder(reg, text);
       else if (reg.type === "product") parsed = this.parseProductRegistrationOrder(reg, text);
       else if (reg.type === "option") {
         parsed = this.parseOptionRegistrationOrder(reg, text);
-        if (!parsed) parsed = this.parseProductRegistrationOrder(reg, text);
+        if (!parsed && this.sameNameRegistrations(reg.product).length <= 1) {
+          parsed = this.parseProductRegistrationOrder(reg, text);
+        }
       }
       if (parsed) {
         const source = mentionsAssignedProduct(text, parsed.product) ? "named" : (reg.type === "number" ? "number" : "option");
@@ -321,7 +377,12 @@ class OrderEngine {
 
   getRegistrationByOrder(orderObj) {
     return this.getAllRegistrations().find((reg) => {
-      if (reg.type === "option") return reg.product === orderObj.product && (reg.options || []).includes(orderObj.option || "");
+      if (reg.type === "option") {
+        if (reg.product !== orderObj.product) return false;
+        if (Number(reg.price || 0) !== Number(orderObj.price || 0)) return false;
+        if (orderObj.option) return (reg.options || []).includes(orderObj.option);
+        return this.isCurrentRegistration(reg) || (reg.options || []).length <= 1;
+      }
       if (reg.type === "product") return reg.product === orderObj.product;
       if (reg.type === "number") return reg.number === orderObj.product;
       return false;
@@ -333,7 +394,12 @@ class OrderEngine {
     for (const user of Object.values(this.orders)) {
       for (const item of Object.values(user.items)) {
         if (reg.type === "number" && item.product === reg.number) total += Number(item.qty || 0);
-        if ((reg.type === "product" || reg.type === "option") && item.product === reg.product) total += Number(item.qty || 0);
+        if (reg.type === "product" && item.product === reg.product) total += Number(item.qty || 0);
+        if (reg.type === "option" && item.product === reg.product && Number(item.price || 0) === Number(reg.price || 0)) {
+          if (!item.option || (reg.options || []).includes(item.option) || (reg.options || []).includes(item.size)) {
+            total += Number(item.qty || 0);
+          }
+        }
       }
     }
     return total;
@@ -629,6 +695,7 @@ class OrderEngine {
       display_name: composed.label || reg.displayName,
       shot_path: shotPath
     });
+    this.qtyMode.key = key;
     this.qtyMode.product = reg.type === "number" ? reg.number : reg.product;
     this.qtyMode.price = Number(reg.price || 0);
     this.qtyMode.stock = Number(reg.stock || 0);
@@ -647,8 +714,13 @@ class OrderEngine {
   resolveRegistrationKey(input = {}) {
     if (input.key && this.registrations[input.key]) return input.key;
     const product = String(input.product || input.number || "").trim();
-    const candidates = [input.key, `P:${product}`, `O:${product}`, `N:${product}`].filter(Boolean);
-    return candidates.find((key) => this.registrations[key]) || "";
+    const exact = [input.key, `P:${product}`, `N:${product}`].filter(Boolean);
+    const found = exact.find((key) => this.registrations[key]);
+    if (found) return found;
+    const optionKeys = Object.keys(this.registrations).filter((key) => key === `O:${product}` || key.startsWith(`O:${product}:`));
+    if (optionKeys.length === 1) return optionKeys[0];
+    if (this.qtyMode.key && optionKeys.includes(this.qtyMode.key)) return this.qtyMode.key;
+    return optionKeys[0] || "";
   }
 
   applyLatestAsCurrent() {
@@ -656,6 +728,7 @@ class OrderEngine {
     if (!remaining.length) {
       this.qtyMode = {
         enabled: false,
+        key: "",
         product: "",
         price: 0,
         stock: 0,
@@ -667,6 +740,7 @@ class OrderEngine {
       return;
     }
     const next = remaining[0];
+    this.qtyMode.key = next.key || "";
     this.qtyMode.product = next.type === "number" ? next.number : next.product;
     this.qtyMode.price = Number(next.price || 0);
     this.qtyMode.stock = Number(next.stock || 0);
@@ -690,7 +764,7 @@ class OrderEngine {
         if (this.aliasMap[alias]?.product === productName) delete this.aliasMap[alias];
       }
     }
-    if (this.lastOrder && (this.lastOrder.product === productName || this.lastOrder.product === reg.product || this.lastOrder.product === reg.number)) {
+    if (this.lastOrder && this.getRegistrationByOrder(this.lastOrder)?.key === reg.key) {
       this.lastOrder = null;
     }
     const currentName = this.qtyMode.product;
