@@ -8,7 +8,8 @@ const state = {
   guessOnly: false,
   editingUserId: null,
   adminUsers: [],
-  lastSession: null
+  lastSession: null,
+  adminStatsTimer: null
 };
 
 const $ = (id) => document.getElementById(id);
@@ -271,7 +272,29 @@ async function bootApp() {
   }
   connectWs();
   show("app");
-  if (data.user.role === "admin") loadAdmin();
+  if (data.user.role === "admin") {
+    $("adminOverview").classList.remove("hidden");
+    await loadAdmin();
+    startAdminStats();
+  }
+}
+
+async function loadAdminStats() {
+  try {
+    const data = await api("/api/admin/overview");
+    $("adminStatSellers").textContent = data.sellers ?? 0;
+    $("adminStatOnline").textContent = data.online ?? 0;
+    $("adminStatTiktok").textContent = data.tiktok ?? 0;
+    $("adminStatYoutube").textContent = data.youtube ?? 0;
+  } catch {
+    // keep last numbers if refresh fails
+  }
+}
+
+function startAdminStats() {
+  if (state.adminStatsTimer) return;
+  loadAdminStats();
+  state.adminStatsTimer = setInterval(loadAdminStats, 8000);
 }
 
 async function loadAdmin() {
@@ -299,6 +322,7 @@ async function loadAdmin() {
     </div>
   `).join("");
   if ($("sellerDataUser").value) loadSellerData();
+  await loadAdminStats();
 }
 
 function resetUserForm() {

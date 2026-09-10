@@ -60,4 +60,20 @@ function makeBroadcaster(getSessionUserId) {
   };
 }
 
-module.exports = { attachRealtime, broadcastToUser, makeBroadcaster };
+function countOnlineSellers() {
+  let count = 0;
+  for (const [userId, list] of clients.entries()) {
+    for (const socket of [...list]) {
+      if (socket.readyState !== 1) list.delete(socket);
+    }
+    if (!list.size) {
+      clients.delete(userId);
+      continue;
+    }
+    const user = db.getUserById(userId);
+    if (user?.role === "seller") count += 1;
+  }
+  return count;
+}
+
+module.exports = { attachRealtime, broadcastToUser, makeBroadcaster, countOnlineSellers };

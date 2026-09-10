@@ -4,6 +4,7 @@ const express = require("express");
 const db = require("./db");
 const auth = require("./auth");
 const collector = require("./collectors/manager");
+const realtime = require("./realtime");
 const { writeExcel, writeChatExcel, writeUserDayChatExcel } = require("./export/excel");
 const { renderInvoices } = require("./export/images");
 
@@ -43,6 +44,17 @@ function createRouter(broadcast) {
       channels: req.user.role === "admin" ? db.listChannels() : db.listChannels(req.user.id),
       session: current,
       lastSession: current || lastSessionFor(req.user.id)
+    });
+  });
+
+  router.get("/admin/overview", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    const collecting = collector.runningCollectionCounts();
+    res.json({
+      ok: true,
+      sellers: db.listUsers().filter((user) => user.role === "seller").length,
+      online: realtime.countOnlineSellers(),
+      tiktok: collecting.tiktok,
+      youtube: collecting.youtube
     });
   });
 

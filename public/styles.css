@@ -161,6 +161,7 @@ main { padding: 28px 32px 40px; }
 .chat-row b, .order-row b { color: var(--mint); margin-right: 8px; }
 .chat-row.order { outline: 1px solid rgba(232, 195, 122, 0.35); }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+.admin-stats { grid-template-columns: repeat(4, 1fr); }
 .stats article {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -193,6 +194,6 @@ th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--li
 .admin-data .feed { height: 280px; }
 
 @media (max-width: 960px) {
-  .login-shell, .app-shell, .desk-grid, .admin-grid, .stats { grid-template-columns: 1fr; }
+  .login-shell, .app-shell, .desk-grid, .admin-grid, .stats, .admin-stats { grid-template-columns: 1fr; }
   .login-story { display: none; }
 }

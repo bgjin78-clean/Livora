@@ -145,6 +145,17 @@ function publicSession(session) {
   };
 }
 
+function runningCollectionCounts() {
+  let tiktok = 0;
+  let youtube = 0;
+  for (const session of sessions.values()) {
+    if (session.status !== "running") continue;
+    if (session.platform === "tiktok") tiktok += 1;
+    else if (session.platform === "youtube") youtube += 1;
+  }
+  return { tiktok, youtube };
+}
+
 module.exports = {
   getUserSession,
   getSession,
@@ -152,5 +163,6 @@ module.exports = {
   stopSession,
   registerProduct,
   removeProduct,
-  publicSession
+  publicSession,
+  runningCollectionCounts
 };
