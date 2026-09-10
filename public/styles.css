@@ -90,6 +90,20 @@ nav { display: grid; gap: 8px; }
   cursor: pointer;
 }
 .nav-btn.active, .nav-btn:hover { background: #1a1b24; color: var(--text); }
+.nav-admin { margin-top: 8px; padding-top: 14px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.nav-label { margin: 0 12px 2px; color: var(--gold); font-size: 11px; letter-spacing: 0.16em; }
+.admin-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.admin-tab-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.admin-tab-btn.active, .admin-tab-btn:hover { color: var(--text); border-color: rgba(232, 195, 122, 0.45); }
+.admin-tab-btn.active { background: #1a1b24; color: var(--gold); }
+.admin-tab-page .panel { min-height: 360px; }
 .aside-user { margin-top: auto; display: grid; gap: 8px; }
 .aside-user small { color: var(--muted); }
 .aside-user button { background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 8px; cursor: pointer; }
@@ -189,7 +203,7 @@ th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--li
 .form-actions button { width: auto; flex: 1; }
 .file-upload { margin: 10px 0 0; }
 .file-upload input { margin-top: 6px; }
-.admin-data { grid-column: 1 / -1; min-height: 0; }
+.admin-data { min-height: 0; }
 .admin-data h4 { margin: 8px 0; font-size: 14px; color: var(--muted); }
 .admin-data .feed { height: 280px; }
 

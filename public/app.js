@@ -46,10 +46,11 @@ function setPage(page) {
     desk: ["COLLECTOR", "주문 수집"],
     orders: ["ORDERS", "주문 목록"],
     files: ["ARCHIVE", "엑셀·정산서"],
-    admin: ["ACCESS", "승인 관리"]
+    admin: ["ADMIN", "관리"]
   };
   $("pageEyebrow").textContent = titles[page][0];
   $("pageTitle").textContent = titles[page][1];
+  if (page === "admin") loadAdminStats();
 }
 
 function platformLabel(platform) {
@@ -256,7 +257,7 @@ async function bootApp() {
   setLastSession(data.session || data.lastSession);
   $("sideName").textContent = data.user.name;
   $("sideMeta").textContent = `${data.user.role} · ${data.user.expireDate || ""}`;
-  $("adminNav").classList.toggle("hidden", data.user.role !== "admin");
+  $("adminNavWrap").classList.toggle("hidden", data.user.role !== "admin");
   renderChannels();
   setLiveBadge();
   if (state.session) {
@@ -273,7 +274,6 @@ async function bootApp() {
   connectWs();
   show("app");
   if (data.user.role === "admin") {
-    $("adminOverview").classList.remove("hidden");
     await loadAdmin();
     startAdminStats();
   }
@@ -295,6 +295,21 @@ function startAdminStats() {
   if (state.adminStatsTimer) return;
   loadAdminStats();
   state.adminStatsTimer = setInterval(loadAdminStats, 8000);
+}
+
+function setAdminTab(tab) {
+  const pages = {
+    accounts: "adminTabAccounts",
+    channels: "adminTabChannels",
+    "seller-data": "adminTabSellerData"
+  };
+  Object.entries(pages).forEach(([name, id]) => {
+    $(id).classList.toggle("hidden", name !== tab);
+  });
+  document.querySelectorAll(".admin-tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.adminTab === tab);
+  });
+  if (tab === "seller-data" && $("sellerDataUser").value) loadSellerData();
 }
 
 async function loadAdmin() {
@@ -411,6 +426,10 @@ $("logoutBtn").onclick = async () => {
 
 document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.onclick = () => setPage(btn.dataset.page);
+});
+
+document.querySelectorAll(".admin-tab-btn").forEach((btn) => {
+  btn.onclick = () => setAdminTab(btn.dataset.adminTab);
 });
 
 $("platformSelect").onchange = renderChannelIds;

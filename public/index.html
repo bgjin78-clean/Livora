@@ -48,7 +48,10 @@
         <button class="nav-btn active" data-page="desk">주문 수집</button>
         <button class="nav-btn" data-page="orders">주문 목록</button>
         <button class="nav-btn" data-page="files">엑셀·정산서</button>
-        <button id="adminNav" class="nav-btn hidden" data-page="admin">승인 관리</button>
+        <div id="adminNavWrap" class="nav-admin hidden">
+          <p class="nav-label">관리자</p>
+          <button id="adminNav" class="nav-btn" data-page="admin">관리</button>
+        </div>
       </nav>
       <div class="aside-user">
         <b id="sideName">-</b>
@@ -65,13 +68,6 @@
         </div>
         <div id="liveBadge" class="badge">대기</div>
       </header>
-
-      <div id="adminOverview" class="stats admin-stats hidden">
-        <article><span>판매자 등록</span><b id="adminStatSellers">0</b></article>
-        <article><span>접속 중</span><b id="adminStatOnline">0</b></article>
-        <article><span>틱톡 수집</span><b id="adminStatTiktok">0</b></article>
-        <article><span>유튜브 수집</span><b id="adminStatYoutube">0</b></article>
-      </div>
 
       <section id="deskPage" class="page">
         <div class="control-row">
@@ -138,7 +134,18 @@
       </section>
 
       <section id="adminPage" class="page hidden">
-        <div class="admin-grid">
+        <div id="adminOverview" class="stats admin-stats">
+          <article><span>판매자 등록</span><b id="adminStatSellers">0</b></article>
+          <article><span>접속 중</span><b id="adminStatOnline">0</b></article>
+          <article><span>틱톡 수집</span><b id="adminStatTiktok">0</b></article>
+          <article><span>유튜브 수집</span><b id="adminStatYoutube">0</b></article>
+        </div>
+        <div class="admin-tabs">
+          <button type="button" class="admin-tab-btn active" data-admin-tab="accounts">계정</button>
+          <button type="button" class="admin-tab-btn" data-admin-tab="channels">채널 승인</button>
+          <button type="button" class="admin-tab-btn" data-admin-tab="seller-data">셀러 주문·채팅</button>
+        </div>
+        <div id="adminTabAccounts" class="admin-tab-page">
           <article class="panel">
             <h3>계정 관리</h3>
             <input id="newUser" placeholder="아이디" />
@@ -168,6 +175,8 @@
             </label>
             <div id="userList" class="stack-list"></div>
           </article>
+        </div>
+        <div id="adminTabChannels" class="admin-tab-page hidden">
           <article class="panel">
             <h3>채널 승인</h3>
             <select id="channelUser"></select>
@@ -180,6 +189,8 @@
             <button id="addChannelBtn" class="mint-btn" type="button">승인 추가</button>
             <div id="channelList" class="stack-list"></div>
           </article>
+        </div>
+        <div id="adminTabSellerData" class="admin-tab-page hidden">
           <article class="panel admin-data">
             <h3>셀러 주문·채팅</h3>
             <p class="register-hint">셀러를 고르면 그 계정의 방송·주문·채팅을 볼 수 있습니다.</p>
