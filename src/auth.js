@@ -5,20 +5,20 @@ const db = require("./db");
 
 const COOKIE = "livora_token";
 
-function signUser(user) {
+function signUser(user, remember = false) {
   return jwt.sign(
     { id: user.id, username: user.username, role: user.role },
     config.jwtSecret,
-    { expiresIn: "12h" }
+    { expiresIn: remember ? "30d" : "12h" }
   );
 }
 
-function setAuthCookie(res, token) {
+function setAuthCookie(res, token, remember = false) {
   res.cookie(COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: config.cookieSecure,
-    maxAge: 12 * 60 * 60 * 1000
+    maxAge: (remember ? 30 : 0.5) * 24 * 60 * 60 * 1000
   });
 }
 
@@ -40,7 +40,7 @@ function readUser(req) {
   }
 }
 
-function login(username, password) {
+function login(username, password, remember = false) {
   const user = db.getUserByUsername(String(username || "").trim());
   if (!user) return { ok: false, message: "아이디 또는 비밀번호가 틀렸습니다." };
   if (!bcrypt.compareSync(String(password || ""), user.password_hash)) {
@@ -50,7 +50,7 @@ function login(username, password) {
   if (user.expire_date && new Date() > new Date(`${user.expire_date}T23:59:59`)) {
     return { ok: false, message: "사용 기간이 만료되었습니다." };
   }
-  return { ok: true, user, token: signUser(user) };
+  return { ok: true, user, token: signUser(user, Boolean(remember)) };
 }
 
 function requireAuth(req, res, next) {
@@ -76,7 +76,9 @@ function publicUser(user) {
     name: user.name,
     role: user.role,
     status: user.status,
-    expireDate: user.expire_date
+    expireDate: user.expire_date,
+    license: user.license || "PRO",
+    mailTo: user.mail_to || ""
   };
 }
 

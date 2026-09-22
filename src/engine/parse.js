@@ -78,7 +78,16 @@ const COLOR_SIZE_TRAILING_RE = new RegExp(
   "g"
 );
 const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도/u;
-const CANCEL_WORDS = ["취소", "삭제", "빼주세요", "빼", "안할게"];
+const CANCEL_WORDS = ["취소", "삭제", "빼주세요", "빼줘", "안할게", "제외", "필요없어"];
+const CANCEL_PHRASES = [
+  "취소해주세요", "취소할께요", "취소할게요", "취소해줘", "취소할게", "취소할께", "취소요", "주문취소요", "주문취소", "취소",
+  "삭제해주세요", "삭제해줘", "삭제요", "삭제",
+  "빼주세요", "빼주세용", "빼주시고", "빼줘요", "빼주라", "빼줘",
+  "제외해주세요", "제외해줘", "제외",
+  "안할게요", "안할께요", "안살게요", "안살께요", "안할게", "안할께", "안살게", "안살께",
+  "필요없어요", "필요없어"
+];
+const CANCEL_TAIL_PATTERN = "(?:취소해주세요|취소할께요|취소할게요|취소해줘|취소할게|취소할께|취소요|주문취소요|주문취소|취소|삭제해주세요|삭제해줘|삭제요|삭제|빼주세요|빼주세용|빼주시고|빼줘요|빼주라|빼줘|제외해주세요|제외해줘|제외|안할게요|안할께요|안살게요|안살께요|안할게|안할께|안살게|안살께|필요없어요|필요없어)";
 const FOLLOW_WORDS = ["저두요", "저도요", "저요", "주문요", "나도요", "나두요", "ㅈㅇ"];
 
 function normalizeText(text) {
@@ -352,6 +361,47 @@ function hasExplicitQty(msg) {
   return false;
 }
 
+function isCancelIntent(msg) {
+  const compact = normalizeCompact(msg);
+  if (!compact) return false;
+  if (["취소", "주문취소", "취소요", "주문취소요"].includes(compact)) return true;
+  return CANCEL_PHRASES.some((phrase) => compact.includes(phrase));
+}
+
+function parseCancelQty(msg) {
+  const text = normalizeText(msg);
+  const numberQty = text.match(new RegExp(`(\\d+)\\s*(?:개|장|세트|셋트|벌)?\\s*${CANCEL_TAIL_PATTERN}`, "u"));
+  if (numberQty) return Number(numberQty[1] || 0);
+  const koreanQty = text.match(new RegExp(`(한\\s*개|한개|하나|두\\s*개|두개|둘|세\\s*개|세개|셋|네\\s*개|네개|넷)\\s*${CANCEL_TAIL_PATTERN}`, "u"));
+  if (!koreanQty) return 0;
+  const key = String(koreanQty[1] || "").replace(/\s+/g, "");
+  return ({ 한개: 1, 하나: 1, 두개: 2, 둘: 2, 세개: 3, 셋: 3, 네개: 4, 넷: 4 })[key] || 0;
+}
+
+function stripCancelWords(msg) {
+  let work = normalizeText(msg);
+  for (const phrase of CANCEL_PHRASES.slice().sort((a, b) => b.length - a.length)) {
+    work = work.split(phrase).join(" ");
+  }
+  return normalizeText(work);
+}
+
+function parseQtyChangeMessage(text) {
+  const compact = normalizeCompact(text);
+  if (!compact) return null;
+  let match = compact.match(/^수량(\d{1,3})(?:개|장)?$/);
+  if (!match) match = compact.match(/^(\d{1,3})(?:개|장)?(?:로)?변경$/);
+  if (!match) return null;
+  const qty = Number(match[1]);
+  if (!Number.isInteger(qty) || qty <= 0) return null;
+  return qty;
+}
+
+function isSafeImmediateQty(qty) {
+  const n = Number(qty);
+  return Number.isInteger(n) && n >= 1 && n <= 10;
+}
+
 const AMBIGUOUS_COLORS = new Set(["네", "베", "파", "회"]);
 
 function aliasKeys(map) {
@@ -449,6 +499,7 @@ module.exports = {
   ORDER_SUFFIX_PATTERN,
   QUESTION_RE,
   CANCEL_WORDS,
+  CANCEL_PHRASES,
   FOLLOW_WORDS,
   hasOrderKeyword,
   isBrowseDesireOnly,
@@ -471,6 +522,11 @@ module.exports = {
   registrationKey,
   isManagerStyleMessage,
   hasExplicitQty,
+  isCancelIntent,
+  parseCancelQty,
+  stripCancelWords,
+  parseQtyChangeMessage,
+  isSafeImmediateQty,
   parseColorSizeQty,
   parseColorSizeQtyList,
   mentionsAssignedProduct,

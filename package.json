@@ -12,6 +12,8 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.5",
+    "@grpc/proto-loader": "^0.8.1",
     "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
     "better-sqlite3": "^12.2.0",
@@ -21,6 +23,8 @@
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^8.0.11",
+    "screenshot-desktop": "^1.15.6",
     "tiktok-live-connector": "2.1.1-beta1",
     "ws": "^8.18.3"
   }

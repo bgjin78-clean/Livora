@@ -33,6 +33,10 @@
         <span>비밀번호</span>
         <input id="loginPw" type="password" autocomplete="current-password" placeholder="받은 비밀번호" />
       </label>
+      <label class="remember-row">
+        <input id="rememberLogin" type="checkbox" />
+        <span>로그인 유지 (30일)</span>
+      </label>
       <button id="loginBtn" class="gold-btn" type="button">들어가기</button>
       <p id="loginError" class="error"></p>
     </section>
@@ -76,8 +80,12 @@
           <button id="startBtn" class="gold-btn" type="button">수집 시작</button>
           <button id="stopBtn" class="ghost-btn" type="button">종료</button>
           <button id="qtyBtn" class="ghost-btn" type="button">이거모드</button>
+          <button id="shotBtn" class="ghost-btn" type="button">화면캡처 ON</button>
+          <button id="labelBtn" class="ghost-btn" type="button">라벨</button>
         </div>
         <p id="channelIdsHint" class="register-hint">승인된 채널을 불러오는 중</p>
+        <p id="shotHint" class="register-hint">주문이 들어오면 Livora가 켜진 이 컴퓨터 화면 전체를 저장합니다. 상품 등록 전 F2 또는 F2 캡처로 확인용 사진을 찍을 수 있습니다.</p>
+        <p id="labelHint" class="register-hint">라벨을 켜면 주문이 들어올 때 50×40mm 인쇄 창이 뜹니다. TSC DA220을 고르고 용지 크기를 맞추세요. 놓친 라벨은 주문 옆의 라벨 버튼으로 다시 찍을 수 있습니다.</p>
         <div class="register-row">
           <input id="productName" placeholder="상품명" />
           <input id="productNumber" inputmode="numeric" placeholder="번호" />
@@ -87,12 +95,15 @@
           <input id="productPrice" inputmode="numeric" placeholder="가격" />
           <input id="productStock" inputmode="numeric" placeholder="재고" />
           <button id="registerBtn" class="mint-btn" type="button">상품 등록</button>
+          <button id="productShotBtn" class="ghost-btn" type="button">F2 캡처</button>
+          <button id="resetProductsBtn" class="ghost-btn" type="button">상품 초기화</button>
         </div>
         <p id="currentProduct" class="register-hint">현재 등록 상품 없음</p>
         <div id="productList" class="product-chips"></div>
         <div class="desk-grid">
           <article class="panel">
             <h3>실시간 채팅</h3>
+            <button id="clearChatBtn" class="ghost-btn" type="button">채팅 지우기</button>
             <div id="chatList" class="feed"></div>
           </article>
           <article class="panel">
@@ -112,10 +123,22 @@
           <input id="guessOnly" type="checkbox" />
           추정 주문만 보기 (채팅에 상품명이 없음)
         </label>
+        <div class="control-row">
+          <button id="summaryAllBtn" class="ghost-btn" type="button">요약</button>
+          <button id="summaryProductBtn" class="ghost-btn" type="button">상품요약</button>
+          <button id="summaryBuyerBtn" class="ghost-btn" type="button">구매자요약</button>
+          <button id="clearOrdersBtn" class="ghost-btn" type="button">주문목록 지우기</button>
+        </div>
+        <pre id="summaryBox" class="summary-box">요약을 누르면 지금 주문 합계가 여기에 나옵니다.</pre>
+        <article class="panel review-panel">
+          <h3>검수대기</h3>
+          <p class="register-hint">수량이 11개 이상이면 바로 접수하지 않고 여기에 올립니다. 채팅에서 수량을 다시 말해 주세요.</p>
+          <div id="reviewList" class="feed review-feed"></div>
+        </article>
         <table>
           <thead>
             <tr>
-              <th>닉네임</th><th>상품</th><th>옵션</th><th>수량</th><th>금액</th><th>인식</th><th>채팅</th>
+              <th>닉네임</th><th>상품</th><th>옵션</th><th>수량</th><th>금액</th><th>인식</th><th>채팅</th><th class="shot-col">캡처</th><th>라벨</th>
             </tr>
           </thead>
           <tbody id="orderTable"></tbody>
@@ -129,6 +152,7 @@
           <button id="excelBtn" class="gold-btn" type="button">주문 엑셀</button>
           <button id="chatExcelFilesBtn" class="mint-btn" type="button">채팅 엑셀</button>
           <button id="invoiceBtn" class="ghost-btn" type="button">정산서 만들기</button>
+          <button id="shotsBtn" class="ghost-btn" type="button">화면 캡처 보기</button>
         </div>
         <div id="fileList" class="file-list"></div>
       </section>
@@ -144,6 +168,7 @@
           <button type="button" class="admin-tab-btn active" data-admin-tab="accounts">계정</button>
           <button type="button" class="admin-tab-btn" data-admin-tab="channels">채널 승인</button>
           <button type="button" class="admin-tab-btn" data-admin-tab="seller-data">셀러 주문·채팅</button>
+          <button type="button" class="admin-tab-btn" data-admin-tab="logs">접속 로그</button>
         </div>
         <div id="adminTabAccounts" class="admin-tab-page">
           <article class="panel">
@@ -159,7 +184,12 @@
               <option value="active">사용중</option>
               <option value="stopped">정지</option>
             </select>
+            <select id="newLicense">
+              <option value="PRO">PRO</option>
+              <option value="Basic">Basic</option>
+            </select>
             <input id="newExpire" type="date" />
+            <input id="newMail" type="email" placeholder="종료 시 엑셀 받을 메일" />
             <div class="form-actions">
               <button id="addUserBtn" class="gold-btn" type="button">계정 생성</button>
               <button id="cancelEditBtn" class="ghost-btn hidden" type="button">취소</button>
@@ -193,7 +223,7 @@
         <div id="adminTabSellerData" class="admin-tab-page hidden">
           <article class="panel admin-data">
             <h3>셀러 주문·채팅</h3>
-            <p class="register-hint">셀러를 고르면 그 계정의 방송·주문·채팅을 볼 수 있습니다.</p>
+            <p class="register-hint">셀러를 고르면 주문·채팅과 엑셀을 확인할 수 있습니다. 화면 캡처는 판매자만 봅니다.</p>
             <select id="sellerDataUser"></select>
             <select id="sellerDataSession"></select>
             <div class="control-row">
@@ -211,6 +241,13 @@
                 <div id="sellerChatList" class="feed"></div>
               </div>
             </div>
+          </article>
+        </div>
+        <div id="adminTabLogs" class="admin-tab-page hidden">
+          <article class="panel">
+            <h3>접속 로그</h3>
+            <p class="register-hint">로그인 성공·실패와 계정 생성 기록이 남습니다.</p>
+            <div id="adminLogList" class="stack-list"></div>
           </article>
         </div>
       </section>

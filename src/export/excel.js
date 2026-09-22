@@ -22,21 +22,77 @@ function paintOrderCell(sheet, row, key) {
   cell.fill = ORDER_FILL;
 }
 
+function parseOptions(raw) {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function stockMeta(products, orders, orderRow) {
+  const productName = String(orderRow.product || "");
+  const regs = (products || []).filter((p) =>
+    String(p.product || p.number || "") === productName
+  );
+  const stock = regs.reduce((sum, p) => Math.max(sum, Number(p.stock || 0)), 0);
+  const sold = (orders || [])
+    .filter((o) => String(o.product || "") === productName)
+    .reduce((sum, o) => sum + Number(o.qty || 0), 0);
+  return {
+    stock,
+    sold,
+    remain: stock > 0 ? stock - sold : ""
+  };
+}
+
+function productSummaryKey(order) {
+  const sc = orderSizeColor(order);
+  return [order.product || "", sc.size, sc.color, Number(order.price || 0)].join("||");
+}
+
+function setShotCell(cell, sessionId, file) {
+  const name = String(file || "").trim();
+  if (!name) {
+    cell.value = "";
+    return;
+  }
+  if (config.publicUrl) {
+    cell.value = {
+      text: name,
+      hyperlink: `${config.publicUrl}/api/sessions/${sessionId}/shots/${encodeURIComponent(path.basename(name))}`
+    };
+    cell.font = { color: { argb: "FF0563C1" }, underline: true };
+    return;
+  }
+  cell.value = name;
+}
+
 async function writeExcel(sessionId) {
   const orders = db.listOrders(sessionId);
   const chats = db.listChats(sessionId, 5000);
   const products = db.listProducts(sessionId);
   const workbook = new ExcelJS.Workbook();
+  const totalQty = orders.reduce((sum, o) => sum + Number(o.qty || 0), 0);
+  const totalAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+  const buyers = new Set(orders.map((o) => o.uid || o.nick)).size;
 
   const productSheet = workbook.addWorksheet("상품기준");
   productSheet.columns = [
+    { header: "시간", key: "time", width: 22 },
     { header: "상품명", key: "product", width: 24 },
     { header: "사이즈", key: "size", width: 12 },
     { header: "색상", key: "color", width: 12 },
     { header: "수량", key: "qty", width: 10 },
     { header: "단가", key: "price", width: 12 },
-    { header: "가격", key: "amount", width: 14 },
-    { header: "주문자", key: "nick", width: 20 }
+    { header: "소계", key: "amount", width: 14 },
+    { header: "초기재고", key: "stock", width: 12 },
+    { header: "판매수량", key: "sold", width: 12 },
+    { header: "남은수량", key: "remain", width: 12 },
+    { header: "주문자", key: "nick", width: 20 },
+    { header: "채팅", key: "msg", width: 40 },
+    { header: "스샷파일명", key: "shot", width: 40 }
   ];
   const productRows = [...orders].sort((a, b) =>
     String(a.product || "").localeCompare(String(b.product || ""), "ko")
@@ -46,27 +102,83 @@ async function writeExcel(sessionId) {
   );
   for (const o of productRows) {
     const sc = orderSizeColor(o);
-    productSheet.addRow({
+    const meta = stockMeta(products, orders, o);
+    const row = productSheet.addRow({
+      time: o.updated_at || o.created_at || "",
       product: o.product,
       size: sc.size,
       color: sc.color,
       qty: o.qty,
       price: o.price,
       amount: o.amount,
-      nick: o.nick
+      stock: meta.stock || "",
+      sold: meta.sold,
+      remain: meta.remain,
+      nick: o.nick,
+      msg: o.msg,
+      shot: o.shot_path || ""
     });
+    setShotCell(row.getCell("shot"), sessionId, o.shot_path);
+  }
+
+  const summarySheet = workbook.addWorksheet("합계");
+  summarySheet.columns = [
+    { header: "항목", key: "label", width: 18 },
+    { header: "값", key: "value", width: 18 }
+  ];
+  summarySheet.addRow({ label: "구매자 수", value: buyers });
+  summarySheet.addRow({ label: "주문 수량", value: totalQty });
+  summarySheet.addRow({ label: "매출 합계", value: totalAmount });
+
+  const groupSheet = workbook.addWorksheet("상품별집계");
+  groupSheet.columns = [
+    { header: "상품명", key: "product", width: 24 },
+    { header: "사이즈", key: "size", width: 12 },
+    { header: "색상", key: "color", width: 12 },
+    { header: "수량", key: "qty", width: 10 },
+    { header: "단가", key: "price", width: 12 },
+    { header: "금액", key: "amount", width: 14 },
+    { header: "초기재고", key: "stock", width: 12 },
+    { header: "남은수량", key: "remain", width: 12 }
+  ];
+  const grouped = {};
+  for (const o of orders) {
+    const key = productSummaryKey(o);
+    if (!grouped[key]) {
+      const sc = orderSizeColor(o);
+      const meta = stockMeta(products, orders, o);
+      grouped[key] = {
+        product: o.product,
+        size: sc.size,
+        color: sc.color,
+        qty: 0,
+        price: o.price,
+        amount: 0,
+        stock: meta.stock || "",
+        remain: meta.remain
+      };
+    }
+    grouped[key].qty += Number(o.qty || 0);
+    grouped[key].amount += Number(o.amount || 0);
+  }
+  for (const row of Object.values(grouped).sort((a, b) =>
+    String(a.product).localeCompare(String(b.product), "ko")
+  )) {
+    groupSheet.addRow(row);
   }
 
   const buyerSheet = workbook.addWorksheet("구매자기준");
   buyerSheet.columns = [
+    { header: "시간", key: "time", width: 22 },
     { header: "닉네임", key: "nick", width: 20 },
     { header: "상품명", key: "product", width: 24 },
     { header: "사이즈", key: "size", width: 12 },
     { header: "색상", key: "color", width: 12 },
     { header: "수량", key: "qty", width: 10 },
     { header: "단가", key: "price", width: 12 },
-    { header: "가격", key: "amount", width: 14 },
-    { header: "채팅", key: "msg", width: 40 }
+    { header: "소계", key: "amount", width: 14 },
+    { header: "채팅", key: "msg", width: 40 },
+    { header: "스샷파일명", key: "shot", width: 40 }
   ];
   const buyerRows = [...orders].sort((a, b) =>
     String(a.nick || "").localeCompare(String(b.nick || ""), "ko")
@@ -74,7 +186,8 @@ async function writeExcel(sessionId) {
   );
   for (const o of buyerRows) {
     const sc = orderSizeColor(o);
-    buyerSheet.addRow({
+    const row = buyerSheet.addRow({
+      time: o.updated_at || o.created_at || "",
       nick: o.nick,
       product: o.product,
       size: sc.size,
@@ -82,8 +195,10 @@ async function writeExcel(sessionId) {
       qty: o.qty,
       price: o.price,
       amount: o.amount,
-      msg: o.msg
+      msg: o.msg,
+      shot: o.shot_path || ""
     });
+    setShotCell(row.getCell("shot"), sessionId, o.shot_path);
   }
 
   const chatSheet = workbook.addWorksheet("채팅");
@@ -113,7 +228,12 @@ async function writeExcel(sessionId) {
     { header: "재고", key: "stock", width: 10 },
     { header: "등록시각", key: "created_at", width: 22 }
   ];
-  for (const p of products) productReg.addRow(p);
+  for (const p of products) {
+    productReg.addRow({
+      ...p,
+      options_json: parseOptions(p.options_json).join(" / ") || p.options_json
+    });
+  }
 
   const filePath = path.join(config.exportsDir, `${sessionId}.xlsx`);
   await workbook.xlsx.writeFile(filePath);

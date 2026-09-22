@@ -103,7 +103,25 @@ function open() {
       updated_at TEXT NOT NULL,
       UNIQUE(session_id, uid, identity_key)
     );
+
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      username TEXT,
+      action TEXT NOT NULL,
+      detail TEXT,
+      ip TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
+
+  const userCols = db.prepare("PRAGMA table_info(users)").all().map((col) => col.name);
+  if (!userCols.includes("license")) {
+    db.exec("ALTER TABLE users ADD COLUMN license TEXT DEFAULT 'PRO'");
+  }
+  if (!userCols.includes("mail_to")) {
+    db.exec("ALTER TABLE users ADD COLUMN mail_to TEXT DEFAULT ''");
+  }
 
   const productCols = db.prepare("PRAGMA table_info(products)").all().map((col) => col.name);
   if (!productCols.includes("default_qty")) {
@@ -130,7 +148,7 @@ function snapshotAccounts(conn = db) {
   return {
     savedAt: now(),
     users: conn.prepare(`
-      SELECT username, password_hash, name, role, status, expire_date, created_at
+      SELECT username, password_hash, name, role, status, expire_date, license, mail_to, created_at
       FROM users ORDER BY id ASC
     `).all(),
     channels: conn.prepare(`
@@ -155,8 +173,8 @@ function restoreAccounts(conn, backup) {
   if (!source?.users?.length) return 0;
 
   const insertUser = conn.prepare(`
-    INSERT INTO users (username, password_hash, name, role, status, expire_date, created_at)
-    VALUES (@username, @password_hash, @name, @role, @status, @expire_date, @created_at)
+    INSERT INTO users (username, password_hash, name, role, status, expire_date, license, mail_to, created_at)
+    VALUES (@username, @password_hash, @name, @role, @status, @expire_date, @license, @mail_to, @created_at)
   `);
   let added = 0;
   for (const user of source.users) {
@@ -168,6 +186,8 @@ function restoreAccounts(conn, backup) {
       role: user.role || "seller",
       status: user.status || "active",
       expire_date: user.expire_date || "2028-12-31",
+      license: user.license === "Basic" ? "Basic" : "PRO",
+      mail_to: user.mail_to || "",
       created_at: user.created_at || now()
     });
     added += 1;
@@ -265,15 +285,19 @@ function getUserById(id) {
 
 function listUsers() {
   return open().prepare(`
-    SELECT id, username, name, role, status, expire_date, created_at
+    SELECT id, username, name, role, status, expire_date, license, mail_to, created_at
     FROM users ORDER BY id ASC
   `).all();
 }
 
-function createUser({ username, password, name, role, expireDate, status }) {
+function normalizeLicense(value) {
+  return String(value || "").toUpperCase() === "BASIC" ? "Basic" : "PRO";
+}
+
+function createUser({ username, password, name, role, expireDate, status, license, mailTo }) {
   const result = open().prepare(`
-    INSERT INTO users (username, password_hash, name, role, status, expire_date, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (username, password_hash, name, role, status, expire_date, license, mail_to, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     username,
     bcrypt.hashSync(password, 10),
@@ -281,6 +305,8 @@ function createUser({ username, password, name, role, expireDate, status }) {
     role || "seller",
     status === "stopped" ? "stopped" : "active",
     expireDate || "2028-12-31",
+    normalizeLicense(license),
+    String(mailTo || "").trim(),
     now()
   );
   const user = getUserById(result.lastInsertRowid);
@@ -301,6 +327,10 @@ function updateUser(id, patch) {
     role: patch.role ?? user.role,
     status: patch.status ?? user.status,
     expire_date: patch.expireDate === undefined ? user.expire_date : (patch.expireDate || "2028-12-31"),
+    license: patch.license === undefined ? (user.license || "PRO") : normalizeLicense(patch.license),
+    mail_to: patch.mailTo === undefined && patch.mail_to === undefined
+      ? (user.mail_to || "")
+      : String(patch.mailTo ?? patch.mail_to ?? "").trim(),
     password_hash: patch.password ? bcrypt.hashSync(patch.password, 10) : user.password_hash
   };
   if (!next.username) throw new Error("아이디가 필요합니다.");
@@ -309,7 +339,8 @@ function updateUser(id, patch) {
   }
   open().prepare(`
     UPDATE users
-    SET username = @username, name = @name, role = @role, status = @status, expire_date = @expire_date, password_hash = @password_hash
+    SET username = @username, name = @name, role = @role, status = @status, expire_date = @expire_date,
+        license = @license, mail_to = @mail_to, password_hash = @password_hash
     WHERE id = @id
   `).run({ ...next, id });
   const updated = getUserById(id);
@@ -462,6 +493,31 @@ function deleteAliasesForProduct(sessionId, product) {
   `).run(sessionId, product);
 }
 
+function deleteProductsForSession(sessionId) {
+  open().prepare("DELETE FROM products WHERE session_id = ?").run(sessionId);
+  open().prepare("DELETE FROM aliases WHERE session_id = ?").run(sessionId);
+}
+
+function insertLog(row) {
+  open().prepare(`
+    INSERT INTO activity_logs (user_id, username, action, detail, ip, created_at)
+    VALUES (@user_id, @username, @action, @detail, @ip, @created_at)
+  `).run({
+    user_id: row.user_id || null,
+    username: row.username || "",
+    action: row.action,
+    detail: row.detail || "",
+    ip: row.ip || "",
+    created_at: now()
+  });
+}
+
+function listLogs(limit = 200) {
+  return open().prepare(`
+    SELECT * FROM activity_logs ORDER BY id DESC LIMIT ?
+  `).all(limit);
+}
+
 function insertAlias(row) {
   open().prepare(`
     INSERT INTO aliases (session_id, alias, product) VALUES (?, ?, ?)
@@ -488,17 +544,35 @@ function upsertOrder(row) {
       price = excluded.price,
       amount = excluded.amount,
       msg = excluded.msg,
-      shot_path = excluded.shot_path,
+      shot_path = CASE
+        WHEN excluded.shot_path IS NULL OR excluded.shot_path = '' THEN orders.shot_path
+        ELSE excluded.shot_path
+      END,
       match_source = excluded.match_source,
       inferred = excluded.inferred,
       updated_at = excluded.updated_at
   `).run({ created_at: now(), updated_at: now(), match_source: "", inferred: 0, ...row });
 }
 
+function updateOrderShot(sessionId, uid, identityKey, shotPath) {
+  open().prepare(`
+    UPDATE orders SET shot_path = ?, updated_at = ?
+    WHERE session_id = ? AND uid = ? AND identity_key = ?
+  `).run(shotPath, now(), sessionId, uid, identityKey);
+}
+
 function deleteOrder(sessionId, uid, identityKey) {
   open().prepare(`
     DELETE FROM orders WHERE session_id = ? AND uid = ? AND identity_key = ?
   `).run(sessionId, uid, identityKey);
+}
+
+function deleteOrdersForSession(sessionId) {
+  open().prepare("DELETE FROM orders WHERE session_id = ?").run(sessionId);
+}
+
+function deleteChatsForSession(sessionId) {
+  open().prepare("DELETE FROM chats WHERE session_id = ?").run(sessionId);
 }
 
 function listChats(sessionId, limit = 200) {
@@ -588,10 +662,16 @@ module.exports = {
   insertProduct,
   deleteProduct,
   deleteAliasesForProduct,
+  deleteProductsForSession,
+  insertLog,
+  listLogs,
   insertAlias,
   insertChat,
   upsertOrder,
+  updateOrderShot,
   deleteOrder,
+  deleteOrdersForSession,
+  deleteChatsForSession,
   listChats,
   listAllChats,
   listChatsForUserToday,

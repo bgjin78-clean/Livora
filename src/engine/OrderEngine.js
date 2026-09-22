@@ -6,6 +6,11 @@ const {
   QUESTION_RE,
   CANCEL_WORDS,
   FOLLOW_WORDS,
+  isCancelIntent,
+  parseCancelQty,
+  stripCancelWords,
+  parseQtyChangeMessage,
+  isSafeImmediateQty,
   normalizeText,
   normalizeCompact,
   escapeRegex,
@@ -39,6 +44,8 @@ class OrderEngine {
     this.orders = {};
     this.recent = new Map();
     this.lastOrder = null;
+    this.reviews = [];
+    this.reprocessing = false;
     this.qtyMode = {
       enabled: false,
       key: "",
@@ -469,7 +476,8 @@ class OrderEngine {
       };
     }
     const item = this.orders[uid].items[key];
-    item.qty = mode === "set" ? orderObj.qty : item.qty + orderObj.qty;
+    const prevQty = Number(item.qty || 0);
+    item.qty = mode === "set" ? Number(orderObj.qty || 0) : prevQty + Number(orderObj.qty || 0);
     item.price = orderObj.price || item.price || 0;
     item.msg = msg;
     item.time = now();
@@ -477,6 +485,8 @@ class OrderEngine {
     if (orderObj.matchSource) item.matchSource = orderObj.matchSource;
     item.inferred = Boolean(orderObj.inferred);
     this.persistOrder(uid, nick, item);
+    const delta = Number(item.qty) - prevQty;
+    const printQty = !this.reprocessing && delta > 0 && delta <= 10 ? delta : 0;
     const payload = {
       uid: String(uid),
       nickname: nick,
@@ -485,13 +495,15 @@ class OrderEngine {
       color: item.color,
       size: item.size,
       qty: item.qty,
+      printQty,
       price: item.price,
       amount: item.qty * item.price,
       message: item.msg,
       time: item.time,
       shotFile: item.shotFile,
       matchSource: item.matchSource || "",
-      inferred: Boolean(item.inferred)
+      inferred: Boolean(item.inferred),
+      captureScreen: !this.reprocessing
     };
     this.onEvent("order", payload);
     return payload;
@@ -529,29 +541,147 @@ class OrderEngine {
     return removed;
   }
 
-  handleCancel(uid, nick, msg) {
-    const identity = this.resolveOrderIdentityFromMessage(msg);
-    if (!identity) {
-      if (this.qtyMode.enabled && this.qtyMode.product && this.orders[uid]) {
-        let removed = false;
-        for (const key of Object.keys(this.orders[uid].items)) {
-          const item = this.orders[uid].items[key];
-          if (item.product === this.qtyMode.product) {
-            this.persistOrder(uid, nick, item, true);
-            delete this.orders[uid].items[key];
-            removed = true;
-          }
-        }
-        if (removed) {
-          this.onEvent("cancel", { uid, nickname: nick, product: this.qtyMode.product });
-          return true;
-        }
+  orderItemMatchesIdentity(item, identity) {
+    if (!item || !identity) return false;
+    return (
+      item.product === identity.product &&
+      item.option === identity.option &&
+      item.color === identity.color &&
+      item.size === identity.size &&
+      Number(item.price || 0) === Number(identity.price || 0)
+    );
+  }
+
+  getLatestUserOrderItem(uid) {
+    const user = this.orders[uid];
+    if (!user) return null;
+    let latest = null;
+    for (const [key, item] of Object.entries(user.items || {})) {
+      if (!latest || String(item.time || "") > String(latest.item.time || "")) {
+        latest = { key, item };
       }
-      return false;
     }
-    const ok = this.removeOrderByIdentity(uid, identity);
-    if (ok) this.onEvent("cancel", { uid, nickname: nick, product: identity.product, option: identity.option });
-    return ok;
+    return latest;
+  }
+
+  canAcceptQtyChange(item, newQty) {
+    const meta = this.getStockMetaByOrder(item);
+    if (!meta.hasStock) return true;
+    const current = Number(item.qty || 0);
+    const delta = Number(newQty) - current;
+    if (delta <= 0) return true;
+    return meta.remain >= delta;
+  }
+
+  setItemQty(uid, nick, item, qty, msg) {
+    return this.addOrderItem(uid, nick, {
+      product: item.product,
+      productKey: item.productKey,
+      option: item.option,
+      color: item.color,
+      size: item.size,
+      qty,
+      price: item.price,
+      shotFile: item.shotFile,
+      matchSource: item.matchSource,
+      inferred: item.inferred
+    }, msg, "set");
+  }
+
+  removeItem(uid, nick, key, msg) {
+    const user = this.orders[uid];
+    const item = user?.items?.[key];
+    if (!item) return false;
+    this.persistOrder(uid, nick, item, true);
+    delete user.items[key];
+    if (this.lastOrder && this.orderItemMatchesIdentity(this.lastOrder, item)) this.lastOrder = null;
+    this.onEvent("cancel", {
+      uid: String(uid),
+      nickname: nick,
+      product: item.product,
+      option: item.option,
+      color: item.color,
+      size: item.size,
+      removed: true,
+      message: msg
+    });
+    return true;
+  }
+
+  applyPartialOrFullCancel(uid, nick, key, item, cancelQty, msg) {
+    const currentQty = Number(item.qty || 0);
+    if (cancelQty > 0 && cancelQty < currentQty) {
+      this.setItemQty(uid, nick, item, currentQty - cancelQty, msg);
+      this.onEvent("cancel", {
+        uid: String(uid),
+        nickname: nick,
+        product: item.product,
+        option: item.option,
+        qty: currentQty - cancelQty,
+        reducedBy: cancelQty,
+        remaining: currentQty - cancelQty,
+        message: msg
+      });
+      return true;
+    }
+    return this.removeItem(uid, nick, key, msg);
+  }
+
+  handleCancel(uid, nick, msg) {
+    const user = this.orders[uid];
+    if (!user?.items) return false;
+    const cancelQty = parseCancelQty(msg);
+    const cleaned = stripCancelWords(msg);
+    const identity = cleaned ? this.resolveOrderIdentityFromMessage(cleaned) : null;
+
+    if (identity) {
+      for (const key of Object.keys(user.items)) {
+        const item = user.items[key];
+        if (!this.orderItemMatchesIdentity(item, identity)) continue;
+        return this.applyPartialOrFullCancel(uid, nick, key, item, cancelQty, msg);
+      }
+    }
+
+    if (this.qtyMode.enabled && this.qtyMode.product) {
+      const matchedKeys = Object.keys(user.items).filter((key) => user.items[key]?.product === this.qtyMode.product);
+      if (cancelQty > 0 && matchedKeys.length === 1) {
+        const key = matchedKeys[0];
+        return this.applyPartialOrFullCancel(uid, nick, key, user.items[key], cancelQty, msg);
+      }
+      if (cancelQty <= 0 && matchedKeys.length) {
+        let removed = false;
+        for (const key of matchedKeys) {
+          if (this.removeItem(uid, nick, key, msg)) removed = true;
+        }
+        return removed;
+      }
+    }
+
+    const latest = this.getLatestUserOrderItem(uid);
+    if (latest) {
+      if (cancelQty > 0) return this.applyPartialOrFullCancel(uid, nick, latest.key, latest.item, cancelQty, msg);
+      if (!cleaned || isCancelIntent(msg)) return this.removeItem(uid, nick, latest.key, msg);
+    }
+    return false;
+  }
+
+  handleQtyChange(uid, nick, msg) {
+    const qty = parseQtyChangeMessage(msg);
+    if (!qty) return false;
+    const latest = this.getLatestUserOrderItem(uid);
+    if (!latest) return false;
+    if (qty === Number(latest.item.qty || 0)) return true;
+    if (!this.canAcceptQtyChange(latest.item, qty)) {
+      this.onEvent("stock-block", {
+        nickname: nick,
+        product: latest.item.product,
+        remain: this.getStockMetaByOrder(latest.item).remain
+      });
+      return true;
+    }
+    this.setItemQty(uid, nick, latest.item, qty, msg);
+    this.lastOrder = { ...latest.item, qty: 1 };
+    return true;
   }
 
   handleChange(uid, nick, msg) {
@@ -592,9 +722,30 @@ class OrderEngine {
     return true;
   }
 
+  pushReview(chat, reason, parsed) {
+    const row = {
+      id: chat.id,
+      uid: String(chat.uid || ""),
+      nickname: chat.nick,
+      message: chat.msg,
+      reason,
+      product: parsed?.product || "",
+      option: parsed?.option || "",
+      qty: parsed?.qty || 0,
+      time: chat.time
+    };
+    this.reviews.unshift(row);
+    this.reviews = this.reviews.slice(0, 80);
+    this.onEvent("review", row);
+    return true;
+  }
+
   handleIncomingOrder(chat) {
-    if (CANCEL_WORDS.some((w) => chat.msg.includes(w))) {
+    if (isCancelIntent(chat.msg) || CANCEL_WORDS.some((w) => chat.msg.includes(w))) {
       return this.handleCancel(chat.uid, chat.nick, chat.msg);
+    }
+    if (parseQtyChangeMessage(chat.msg)) {
+      return this.handleQtyChange(chat.uid, chat.nick, chat.msg);
     }
     if (chat.msg.includes("->") || chat.msg.includes("→")) {
       return this.handleChange(chat.uid, chat.nick, chat.msg);
@@ -603,6 +754,11 @@ class OrderEngine {
     if (!parsedList.length) return false;
     let accepted = false;
     for (const parsed of parsedList) {
+      if (!isSafeImmediateQty(parsed.qty) && hasExplicitQty(chat.msg)) {
+        this.pushReview(chat, `수량 ${parsed.qty}개는 자동 확정하지 않습니다 (1~10개만 바로 접수)`, parsed);
+        accepted = true;
+        continue;
+      }
       if (!this.canAcceptOrder(parsed)) {
         this.onEvent("stock-block", {
           nickname: chat.nick,
@@ -786,16 +942,21 @@ class OrderEngine {
   }
 
   reprocessRecentChats() {
-    const chats = db.listChats(this.sessionId, 120);
-    for (const chat of chats) {
-      if (chat.is_order) continue;
-      const handled = this.handleIncomingOrder({
-        uid: chat.uid,
-        nick: chat.nick,
-        msg: chat.msg,
-        id: chat.chat_key
-      });
-      if (handled) db.markChatAsOrder(this.sessionId, chat.chat_key);
+    this.reprocessing = true;
+    try {
+      const chats = db.listChats(this.sessionId, 120);
+      for (const chat of chats) {
+        if (chat.is_order) continue;
+        const handled = this.handleIncomingOrder({
+          uid: chat.uid,
+          nick: chat.nick,
+          msg: chat.msg,
+          id: chat.chat_key
+        });
+        if (handled) db.markChatAsOrder(this.sessionId, chat.chat_key);
+      }
+    } finally {
+      this.reprocessing = false;
     }
   }
 
@@ -804,6 +965,30 @@ class OrderEngine {
     this.qtyMode.enabled = !this.qtyMode.enabled;
     this.onEvent("qty-mode", this.qtyMode);
     return { ok: true, qtyMode: this.qtyMode };
+  }
+
+  resetProducts() {
+    this.registrations = {};
+    this.aliasMap = {};
+    db.deleteProductsForSession(this.sessionId);
+    this.applyLatestAsCurrent();
+    this.onEvent("products-reset", { qtyMode: this.qtyMode, products: [] });
+    return { ok: true, qtyMode: this.qtyMode, products: [] };
+  }
+
+  clearOrders() {
+    this.orders = {};
+    this.lastOrder = null;
+    this.reviews = [];
+    db.deleteOrdersForSession(this.sessionId);
+    this.onEvent("orders-cleared", {});
+    return { ok: true };
+  }
+
+  clearChats() {
+    db.deleteChatsForSession(this.sessionId);
+    this.onEvent("chats-cleared", {});
+    return { ok: true };
   }
 
   snapshot() {
@@ -829,6 +1014,7 @@ class OrderEngine {
       products: this.getAllRegistrations(),
       qtyMode: this.qtyMode,
       orders: orderList,
+      reviews: this.reviews,
       stats: {
         buyers: Object.keys(this.orders).length,
         orderCount: orderList.length,
