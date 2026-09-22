@@ -5,7 +5,6 @@ const {
   ORDER_SUFFIX_PATTERN,
   QUESTION_RE,
   CANCEL_WORDS,
-  FOLLOW_WORDS,
   isCancelIntent,
   parseCancelQty,
   stripCancelWords,
@@ -13,10 +12,15 @@ const {
   isSafeImmediateQty,
   normalizeText,
   normalizeCompact,
+  normalizeMatchText,
   escapeRegex,
   hasOrderKeyword,
+  hasOrderIntent,
   isBrowseDesireOnly,
   isNonPurchaseRequest,
+  isStatusOrInquiry,
+  isOrderSuffixOnly,
+  isFollowPhrase,
   stripIntentWords,
   now,
   makeChatId,
@@ -184,23 +188,30 @@ class OrderEngine {
 
   parseProductRegistrationOrder(reg, msg) {
     const text = normalizeText(msg);
-    const compact = normalizeCompact(msg);
+    const compact = normalizeMatchText(msg);
     const product = String(reg.product || "");
-    const productCompact = normalizeCompact(product);
-    const escProduct = escapeRegex(product);
+    const productCompact = normalizeMatchText(product);
+    if (!productCompact || !compact.includes(productCompact)) return null;
     const escProductCompact = escapeRegex(productCompact);
     if (new RegExp(`^${escProductCompact}${ORDER_SUFFIX_PATTERN}[!?,.]*$`, "u").test(compact)) {
       return { product, option: "", color: "", size: "", qty: 1, price: reg.price || 0, shotFile: reg.shotFile || "" };
     }
-    let m = text.match(new RegExp(`^\\s*${escProduct}(?:\\s*|\\s*-\\s*)(.+)$`, "u"));
-    if (m?.[1]) {
-      if (isBrowseDesireOnly(m[1])) return null;
-      return { product, option: "", color: "", size: "", qty: extractFlexibleQty(m[1], 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
+    if (isStatusOrInquiry(text)) return null;
+    let tail = "";
+    if (compact.startsWith(productCompact)) {
+      tail = compact.slice(productCompact.length);
     }
-    m = compact.match(new RegExp(`^${escProductCompact}(.+)$`, "u"));
-    if (m?.[1]) {
-      if (isBrowseDesireOnly(m[1])) return null;
-      return { product, option: "", color: "", size: "", qty: extractFlexibleQty(m[1], 1), price: reg.price || 0, shotFile: reg.shotFile || "" };
+    if (isBrowseDesireOnly(tail)) return null;
+    if (hasOrderIntent(text) || isOrderSuffixOnly(tail)) {
+      return {
+        product,
+        option: "",
+        color: "",
+        size: "",
+        qty: extractFlexibleQty(text, 1),
+        price: reg.price || 0,
+        shotFile: reg.shotFile || ""
+      };
     }
     return null;
   }
@@ -312,14 +323,23 @@ class OrderEngine {
     };
   }
 
+  namedRegistrations() {
+    return this.getAllRegistrations().slice().sort((a, b) => {
+      const an = normalizeMatchText(a.product || a.number || "");
+      const bn = normalizeMatchText(b.product || b.number || "");
+      return bn.length - an.length;
+    });
+  }
+
   parseMessageToOrders(msg) {
     const text = normalizeText(msg);
     if (!text) return [];
     if (isNonPurchaseRequest(text) || isBrowseDesireOnly(text)) return [];
+    if (isStatusOrInquiry(text)) return [];
     if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return [];
     const mentionsRegistered = this.getAllRegistrations().some((reg) => {
       const name = reg.product || reg.number || "";
-      if (name && normalizeCompact(text).toLowerCase().includes(normalizeCompact(name).toLowerCase())) return true;
+      if (name && mentionsAssignedProduct(text, name)) return true;
       return reg.type === "option" && this.messageMentionsOptions(text, reg.options);
     });
     if (isManagerStyleMessage(text) && !/\d/.test(text) && !hasOrderKeyword(text) && !mentionsRegistered) return [];
@@ -327,13 +347,10 @@ class OrderEngine {
     if (qtyModeParsed) return qtyModeParsed.map((item) => this.applyDefaultQty(this.withMatch(item, "qty-mode", text), text));
     const shorthand = this.parseCurrentProductShorthandList(text);
     if (shorthand) return shorthand.map((item) => this.applyDefaultQty(this.withMatch(item, "current", text), text));
-    if (this.lastOrder && FOLLOW_WORDS.some((w) => normalizeCompact(text).includes(w))) {
-      return [this.applyDefaultQty(this.withMatch({ ...this.lastOrder, qty: 1 }, "follow", text), text)];
-    }
     const aliasParsed = this.parseAliasOrder(text);
     if (aliasParsed) return [this.applyDefaultQty(this.withMatch(aliasParsed, "alias", text), text)];
     const optionHits = [];
-    for (const reg of this.getAllRegistrations()) {
+    for (const reg of this.namedRegistrations()) {
       if (reg.type !== "option") continue;
       const parsed = this.parseOptionRegistrationOrder(reg, text, { requireOption: true });
       if (parsed?.option) optionHits.push(parsed);
@@ -344,7 +361,7 @@ class OrderEngine {
       const source = mentionsAssignedProduct(text, parsed.product) ? "named" : "option";
       return [this.applyDefaultQty(this.withMatch(parsed, source, text), text)];
     }
-    for (const reg of this.getAllRegistrations()) {
+    for (const reg of this.namedRegistrations()) {
       let parsed = null;
       if (reg.type === "number") parsed = this.parseNumberRegistrationOrder(reg, text);
       else if (reg.type === "product") parsed = this.parseProductRegistrationOrder(reg, text);
@@ -358,6 +375,9 @@ class OrderEngine {
         const source = mentionsAssignedProduct(text, parsed.product) ? "named" : (reg.type === "number" ? "number" : "option");
         return [this.applyDefaultQty(this.withMatch(parsed, source, text), text)];
       }
+    }
+    if (this.lastOrder && isFollowPhrase(text)) {
+      return [this.applyDefaultQty(this.withMatch({ ...this.lastOrder, qty: 1 }, "follow", text), text)];
     }
     return [];
   }

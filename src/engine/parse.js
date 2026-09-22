@@ -77,7 +77,19 @@ const COLOR_SIZE_TRAILING_RE = new RegExp(
   `(${phrasePattern([...ORDER_PHRASES, "사이즈", "컬러", "색상", "색", "번", "요", "개", "장"])})`,
   "g"
 );
-const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도/u;
+const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도|안와요|안오네|문자/u;
+
+const STATUS_OR_INQUIRY_PHRASES = [
+  "오늘도착", "도착했는", "도착했", "도착",
+  "남았네요", "남았어요", "남아요", "남았", "남네요", "남음",
+  "문자가안", "문자안", "문자가", "문자",
+  "안와요", "안오네", "안옵니", "안와서", "안옴", "안떠요",
+  "사이트에결제", "사이트에서결제", "사이트에", "사이트에서", "홈페이지에서", "홈페이지에",
+  "송장", "운송장", "택배조회",
+  "입금했", "입금완료", "결제완료",
+  "잘받았", "받았어", "왔네요", "왔어요",
+  "몇송이", "송이날"
+];
 const CANCEL_WORDS = ["취소", "삭제", "빼주세요", "빼줘", "안할게", "제외", "필요없어"];
 const CANCEL_PHRASES = [
   "취소해주세요", "취소할께요", "취소할게요", "취소해줘", "취소할게", "취소할께", "취소요", "주문취소요", "주문취소", "취소",
@@ -111,7 +123,11 @@ function removePhrases(text, phrases) {
 }
 
 function compactForIntent(text) {
-  return normalizeCompact(text).replace(/[~!.,?？♡♥❤]/g, "");
+  return normalizeCompact(text).replace(/[~!.,?？♡♥❤^ㅋㅎㅠㅜ]/g, "");
+}
+
+function normalizeMatchText(text) {
+  return compactForIntent(text).toLowerCase().replace(/[/\-_.·•]/g, "");
 }
 
 function hasOrderKeyword(text) {
@@ -129,6 +145,38 @@ function isNonPurchaseRequest(text) {
   const withoutBrowse = removePhrases(compact, NON_ORDER_PHRASES);
   if (withoutBrowse === compact) return false;
   return !ORDER_KEYWORD_RE.test(withoutBrowse);
+}
+
+function isStatusOrInquiry(text) {
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  if (!STATUS_OR_INQUIRY_PHRASES.some((phrase) => compact.includes(normalizeMatchText(phrase)))) {
+    return false;
+  }
+  return !hasOrderKeyword(text);
+}
+
+function isFollowPhrase(text) {
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  return FOLLOW_WORDS.some((word) => {
+    const needle = normalizeMatchText(word);
+    if (!needle) return false;
+    if (compact === needle) return true;
+    if (needle.length <= 2) return false;
+    return compact.endsWith(needle);
+  });
+}
+
+function isOrderSuffixOnly(tail) {
+  const compact = normalizeMatchText(tail);
+  if (!compact) return true;
+  if (isFollowPhrase(compact)) return true;
+  return new RegExp(`^(?:${phrasePattern(ORDER_SUFFIX_PHRASES)})+$`, "u").test(compact);
+}
+
+function hasOrderIntent(text) {
+  return hasOrderKeyword(text) || hasExplicitQty(text) || isFollowPhrase(text);
 }
 
 function stripIntentWords(text) {
@@ -474,9 +522,9 @@ function parseColorSizeQty(text, opts = {}) {
 }
 
 function mentionsAssignedProduct(msg, product) {
-  const productCompact = normalizeCompact(product).toLowerCase();
+  const productCompact = normalizeMatchText(product);
   if (!productCompact) return false;
-  return normalizeCompact(msg).toLowerCase().includes(productCompact);
+  return normalizeMatchText(msg).includes(productCompact);
 }
 
 function getOrderKey(orderObj) {
@@ -504,9 +552,14 @@ module.exports = {
   hasOrderKeyword,
   isBrowseDesireOnly,
   isNonPurchaseRequest,
+  isStatusOrInquiry,
+  isFollowPhrase,
+  isOrderSuffixOnly,
+  hasOrderIntent,
   stripIntentWords,
   normalizeText,
   normalizeCompact,
+  normalizeMatchText,
   escapeRegex,
   toMoney,
   now,
