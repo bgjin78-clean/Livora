@@ -9,9 +9,30 @@ const MAX_PENDING = 12;
 let queue = Promise.resolve();
 let pending = 0;
 
+function canGrabDesktop() {
+  if (process.env.DISABLE_SCREEN_CAPTURE === "1") return false;
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) {
+    return false;
+  }
+  return true;
+}
+
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    })
+  ]);
+}
+
 async function grabDesktop() {
+  if (!canGrabDesktop()) {
+    throw new Error("클라우드 서버에서는 판매자 PC 화면을 찍을 수 없습니다.");
+  }
   const screenshot = require("screenshot-desktop");
-  return screenshot({ format: "jpg" });
+  return withTimeout(screenshot({ format: "jpg" }), 2500, "화면 캡처가 시간 초과되었습니다.");
 }
 
 function findOrderItem(engine, payload) {
@@ -48,6 +69,7 @@ async function writeShot(sessionId, payload, seller) {
 }
 
 function captureOrderScreen({ engine, seller, onShot, onFail }, payload) {
+  if (!canGrabDesktop()) return;
   if (pending >= MAX_PENDING) return;
   pending += 1;
   queue = queue
@@ -81,6 +103,9 @@ function listShotFiles(sessionId) {
 }
 
 async function captureProductScreen({ sessionId, seller, productName = "F2" }) {
+  if (!canGrabDesktop()) {
+    throw new Error("클라우드 서버에서는 판매자 PC 화면을 찍을 수 없습니다. 상품 등록은 그대로 할 수 있습니다.");
+  }
   const dir = path.join(config.shotsDir, sessionId);
   fs.mkdirSync(dir, { recursive: true });
   const fileName = productShotFileName({ seller, product: productName });
@@ -89,4 +114,4 @@ async function captureProductScreen({ sessionId, seller, productName = "F2" }) {
   return fileName;
 }
 
-module.exports = { captureOrderScreen, captureProductScreen, listShotFiles };
+module.exports = { canGrabDesktop, captureOrderScreen, captureProductScreen, listShotFiles };

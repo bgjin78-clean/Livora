@@ -274,23 +274,28 @@ function createRouter(broadcast) {
   router.post("/sessions/products", auth.requireAuth, async (req, res) => {
     const live = liveFor(req);
     if (!live) return res.status(400).json({ ok: false, message: "먼저 수집을 시작하세요." });
-    const body = req.body || {};
-    const hasFields = ["name", "number", "option", "size", "color", "qty", "price", "stock"].some((key) => body[key] != null && String(body[key]).trim() !== "");
-    const input = hasFields
-      ? {
-          name: body.name,
-          number: body.number,
-          option: body.option,
-          size: body.size,
-          color: body.color,
-          qty: body.qty,
-          price: body.price,
-          stock: body.stock
-        }
-      : (body.payload || "");
-    const result = await collector.registerProduct(live, input);
-    if (!result.ok) return res.status(400).json(result);
-    res.json(result);
+    try {
+      const body = req.body || {};
+      const hasFields = ["name", "number", "option", "size", "color", "qty", "price", "stock"].some((key) => body[key] != null && String(body[key]).trim() !== "");
+      const input = hasFields
+        ? {
+            name: body.name,
+            number: body.number,
+            option: body.option,
+            size: body.size,
+            color: body.color,
+            qty: body.qty,
+            price: body.price,
+            stock: body.stock
+          }
+        : (body.payload || "");
+      const result = await collector.registerProduct(live, input);
+      if (!result.ok) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      console.error("[register product]", err.message);
+      res.status(400).json({ ok: false, message: String(err.message || "").trim() || "상품을 등록하지 못했습니다." });
+    }
   });
 
   router.post("/sessions/product-shot", auth.requireAuth, async (req, res) => {

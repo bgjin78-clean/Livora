@@ -18,6 +18,11 @@ app.get("/health", (_req, res) => {
 });
 app.use("/api", createRouter(broadcastToUser));
 app.use(express.static(path.join(config.rootDir, "public")));
+app.use((err, req, res, next) => {
+  console.error("[http]", err.message || err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ ok: false, message: String(err.message || "").trim() || "요청을 처리하지 못했습니다." });
+});
 
 const server = http.createServer(app);
 attachRealtime(server);

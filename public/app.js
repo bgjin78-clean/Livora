@@ -972,7 +972,10 @@ $("registerBtn").onclick = async () => {
     setCurrentProduct(data.registration, data.qtyMode);
     if (data.qtyMode?.enabled) $("qtyBtn").textContent = "이거모드 ON";
   } catch (err) {
-    alert(err.message);
+    const message = String(err.message || "").trim();
+    alert(message === "요청 실패" || /failed to fetch/i.test(message)
+      ? "상품을 등록하지 못했습니다. 수집이 켜져 있는지 확인한 뒤 다시 등록하세요."
+      : message);
   }
 };
 

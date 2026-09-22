@@ -3,7 +3,7 @@ const db = require("../db");
 const { OrderEngine } = require("../engine/OrderEngine");
 const { composeRegistrationFields } = require("../engine/parse");
 const { writeChatExcel, writeExcel } = require("../export/excel");
-const { captureOrderScreen, captureProductScreen } = require("../export/screenshot");
+const { canGrabDesktop, captureOrderScreen, captureProductScreen } = require("../export/screenshot");
 const { renderInvoices } = require("../export/images");
 const { sendSessionMail } = require("../export/mail");
 const { excelFileName } = require("../export/fileName");
@@ -220,6 +220,9 @@ async function stopSession(sessionId) {
 }
 
 async function capturePendingProductShot(session, productName = "F2") {
+  if (!canGrabDesktop()) {
+    return { ok: false, message: "웹 서버에서는 판매자 PC 화면을 찍을 수 없습니다. 상품 등록은 그대로 하세요." };
+  }
   if (!session.screenCapture) {
     return { ok: false, message: "화면캡처가 꺼져 있습니다. 화면캡처를 켠 뒤 F2를 누르세요." };
   }
@@ -243,7 +246,7 @@ async function registerProduct(session, input) {
   if (!payload) return { ok: true, skipped: true };
   let shotPath = session.pendingShotFile || "";
   session.pendingShotFile = "";
-  if (!shotPath && session.screenCapture) {
+  if (!shotPath && session.screenCapture && canGrabDesktop()) {
     try {
       const seller = db.getUserById(session.userId);
       const name = typeof input === "string"
@@ -258,7 +261,12 @@ async function registerProduct(session, input) {
       console.error("[product shot]", err.message);
     }
   }
-  return session.engine.registerProduct(input, shotPath);
+  try {
+    return session.engine.registerProduct(input, shotPath);
+  } catch (err) {
+    console.error("[register product]", err.message);
+    return { ok: false, message: String(err.message || "").trim() || "상품을 등록하지 못했습니다." };
+  }
 }
 
 function removeProduct(session, input) {
