@@ -19,6 +19,8 @@ const {
   isBrowseDesireOnly,
   isNonPurchaseRequest,
   isStatusOrInquiry,
+  isQuestionLike,
+  isNoiseChat,
   isOrderSuffixOnly,
   isFollowPhrase,
   stripIntentWords,
@@ -196,7 +198,7 @@ class OrderEngine {
     if (new RegExp(`^${escProductCompact}${ORDER_SUFFIX_PATTERN}[!?,.]*$`, "u").test(compact)) {
       return { product, option: "", color: "", size: "", qty: 1, price: reg.price || 0, shotFile: reg.shotFile || "" };
     }
-    if (isStatusOrInquiry(text)) return null;
+    if (isStatusOrInquiry(text) || isQuestionLike(text)) return null;
     let tail = "";
     if (compact.startsWith(productCompact)) {
       tail = compact.slice(productCompact.length);
@@ -335,7 +337,7 @@ class OrderEngine {
     const text = normalizeText(msg);
     if (!text) return [];
     if (isNonPurchaseRequest(text) || isBrowseDesireOnly(text)) return [];
-    if (isStatusOrInquiry(text)) return [];
+    if (isNoiseChat(text) || isQuestionLike(text) || isStatusOrInquiry(text)) return [];
     if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return [];
     const mentionsRegistered = this.getAllRegistrations().some((reg) => {
       const name = reg.product || reg.number || "";

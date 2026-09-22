@@ -77,7 +77,8 @@ const COLOR_SIZE_TRAILING_RE = new RegExp(
   `(${phrasePattern([...ORDER_PHRASES, "사이즈", "컬러", "색상", "색", "번", "요", "개", "장"])})`,
   "g"
 );
-const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도|안와요|안오네|문자/u;
+const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도|안와요|안오네|문자|끝났나요|끝나나요|끝났어요|끝났습니까|마감인가요|품절인가요/u;
+const QUESTION_END_RE = /(나요|는가요|인가요|일까요|을까요|인지요|인지|예요|에요|죠)\s*$/u;
 
 const STATUS_OR_INQUIRY_PHRASES = [
   "오늘도착", "도착했는", "도착했", "도착",
@@ -88,7 +89,10 @@ const STATUS_OR_INQUIRY_PHRASES = [
   "송장", "운송장", "택배조회",
   "입금했", "입금완료", "결제완료",
   "잘받았", "받았어", "왔네요", "왔어요",
-  "몇송이", "송이날"
+  "몇송이", "송이날",
+  "끝났나요", "끝나나요", "끝났어요", "끝났습니까", "끝났음", "끝인가요", "끝났",
+  "마감인가요", "마감됐", "마감되었", "마감이야",
+  "다팔렸", "다됐나요", "다됐어요", "품절인가요", "품절이야", "품절"
 ];
 const CANCEL_WORDS = ["취소", "삭제", "빼주세요", "빼줘", "안할게", "제외", "필요없어"];
 const CANCEL_PHRASES = [
@@ -154,6 +158,21 @@ function isStatusOrInquiry(text) {
     return false;
   }
   return !hasOrderKeyword(text);
+}
+
+function isQuestionLike(text) {
+  if (hasOrderKeyword(text) || isFollowPhrase(text)) return false;
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  if (QUESTION_RE.test(text) || QUESTION_RE.test(compact)) return true;
+  if (QUESTION_END_RE.test(compact)) return true;
+  return isStatusOrInquiry(text);
+}
+
+function isNoiseChat(text) {
+  const compact = normalizeMatchText(text);
+  if (!compact) return true;
+  return compact.length <= 3 && /^[xovㅇㅋㅎㅠㅜw]+$/i.test(compact);
 }
 
 function isFollowPhrase(text) {
@@ -553,6 +572,8 @@ module.exports = {
   isBrowseDesireOnly,
   isNonPurchaseRequest,
   isStatusOrInquiry,
+  isQuestionLike,
+  isNoiseChat,
   isFollowPhrase,
   isOrderSuffixOnly,
   hasOrderIntent,
