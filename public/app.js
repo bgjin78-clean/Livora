@@ -178,7 +178,8 @@ function matchSourceLabel(source) {
     alias: "별칭",
     named: "상품명",
     option: "옵션",
-    number: "번호"
+    number: "번호",
+    unregistered: "미등록 상품"
   }[source] || "";
 }
 

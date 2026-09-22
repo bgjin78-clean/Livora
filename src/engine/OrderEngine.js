@@ -16,13 +16,14 @@ const {
   escapeRegex,
   hasOrderKeyword,
   hasOrderIntent,
+  leftoverAfterOrderWords,
+  extractSpokenProductName,
   isBrowseDesireOnly,
   isNonPurchaseRequest,
   isStatusOrInquiry,
   isQuestionLike,
   isNoiseChat,
   isOrderSuffixOnly,
-  isFollowPhrase,
   stripIntentWords,
   now,
   makeChatId,
@@ -36,6 +37,8 @@ const {
   registrationKey,
   isManagerStyleMessage,
   hasExplicitQty,
+  hasUnitQty,
+  parseFollowOrder,
   parseColorSizeQtyList,
   mentionsAssignedProduct,
   getOrderKey
@@ -333,6 +336,61 @@ class OrderEngine {
     });
   }
 
+  currentRegistration() {
+    if (this.qtyMode.key && this.registrations[this.qtyMode.key]) {
+      return this.registrations[this.qtyMode.key];
+    }
+    return this.getAllRegistrations()
+      .slice()
+      .sort((a, b) => Number(b.registeredAtMs || 0) - Number(a.registeredAtMs || 0))[0] || null;
+  }
+
+  orderFromRegistration(reg, qty) {
+    const options = this.expandedOptions(reg);
+    const fallback = options.length === 1 ? options[0] : "";
+    return {
+      product: reg.type === "number" ? reg.number : reg.product,
+      option: fallback,
+      color: fallback ? normalizeOptionToColor(fallback) : "",
+      size: fallback ? normalizeOptionToSize(fallback) : "",
+      qty: Number(qty || 1) || 1,
+      price: Number(reg.price || 0),
+      shotFile: reg.shotFile || ""
+    };
+  }
+
+  mentionsRegisteredProduct(text) {
+    return this.getAllRegistrations().some((reg) => {
+      const name = reg.product || reg.number || "";
+      return Boolean(name && mentionsAssignedProduct(text, name));
+    });
+  }
+
+  parseLatestProductOrder(msg) {
+    const spoken = extractSpokenProductName(msg);
+    const follow = parseFollowOrder(msg);
+    const hasBareIntent = Boolean(follow) || hasOrderKeyword(msg) || hasUnitQty(msg);
+    if (spoken && spoken.length >= 2 && hasBareIntent) {
+      return {
+        product: spoken,
+        option: "",
+        color: "",
+        size: "",
+        qty: follow ? follow.qty : extractFlexibleQty(msg, 1),
+        price: 0,
+        shotFile: "",
+        unregistered: true
+      };
+    }
+    const reg = this.currentRegistration();
+    if (!reg) return null;
+    if (this.mentionsRegisteredProduct(msg)) return null;
+    if (follow) return this.orderFromRegistration(reg, follow.qty);
+    if (leftoverAfterOrderWords(msg)) return null;
+    if (!hasOrderKeyword(msg) && !hasUnitQty(msg)) return null;
+    return this.orderFromRegistration(reg, extractFlexibleQty(msg, 1));
+  }
+
   parseMessageToOrders(msg) {
     const text = normalizeText(msg);
     if (!text) return [];
@@ -378,8 +436,10 @@ class OrderEngine {
         return [this.applyDefaultQty(this.withMatch(parsed, source, text), text)];
       }
     }
-    if (this.lastOrder && isFollowPhrase(text)) {
-      return [this.applyDefaultQty(this.withMatch({ ...this.lastOrder, qty: 1 }, "follow", text), text)];
+    const latestBare = this.parseLatestProductOrder(text);
+    if (latestBare) {
+      const source = latestBare.unregistered ? "unregistered" : "current";
+      return [this.applyDefaultQty(this.withMatch(latestBare, source, text), text)];
     }
     return [];
   }
@@ -397,6 +457,7 @@ class OrderEngine {
   applyDefaultQty(parsed, msg) {
     if (!parsed) return null;
     const reg = this.getRegistrationByOrder(parsed);
+    if (parsed.unregistered || parsed.matchSource === "unregistered") return parsed;
     const def = Number(reg?.defaultQty || this.qtyMode.defaultQty || 1);
     if (def > 1 && Number(parsed.qty || 1) === 1 && !hasExplicitQty(msg)) {
       parsed.qty = def;

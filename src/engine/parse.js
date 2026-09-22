@@ -104,7 +104,13 @@ const CANCEL_PHRASES = [
   "필요없어요", "필요없어"
 ];
 const CANCEL_TAIL_PATTERN = "(?:취소해주세요|취소할께요|취소할게요|취소해줘|취소할게|취소할께|취소요|주문취소요|주문취소|취소|삭제해주세요|삭제해줘|삭제요|삭제|빼주세요|빼주세용|빼주시고|빼줘요|빼주라|빼줘|제외해주세요|제외해줘|제외|안할게요|안할께요|안살게요|안살께요|안할게|안할께|안살게|안살께|필요없어요|필요없어)";
-const FOLLOW_WORDS = ["저두요", "저도요", "저요", "주문요", "나도요", "나두요", "ㅈㅇ"];
+const FOLLOW_WORDS = [
+  "저도주문요", "저두주문요", "나도주문요", "나두주문요",
+  "저도주문", "저두주문", "나도주문", "나두주문",
+  "저두요", "저도요", "저요",
+  "나도요", "나두요",
+  "주문요", "ㅈㅇ"
+];
 
 function normalizeText(text) {
   return String(text || "").trim();
@@ -176,15 +182,29 @@ function isNoiseChat(text) {
 }
 
 function isFollowPhrase(text) {
+  return Boolean(parseFollowOrder(text));
+}
+
+function parseFollowOrder(text) {
   const compact = normalizeMatchText(text);
-  if (!compact) return false;
-  return FOLLOW_WORDS.some((word) => {
-    const needle = normalizeMatchText(word);
-    if (!needle) return false;
-    if (compact === needle) return true;
-    if (needle.length <= 2) return false;
-    return compact.endsWith(needle);
-  });
+  if (!compact) return null;
+  const words = FOLLOW_WORDS
+    .map((word) => normalizeMatchText(word))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  for (const word of words) {
+    if (compact === word) return { qty: 1 };
+    if (!compact.startsWith(word)) continue;
+    const rest = compact.slice(word.length);
+    if (!rest) return { qty: 1 };
+    if (/^\d{1,3}(?:개|장|박스|상자|세트|셋트|벌)?$/.test(rest)) {
+      return { qty: extractFlexibleQty(rest, 1) };
+    }
+    if (hasOrderKeyword(rest)) {
+      return { qty: extractFlexibleQty(rest, 1) };
+    }
+  }
+  return null;
 }
 
 function isOrderSuffixOnly(tail) {
@@ -192,6 +212,26 @@ function isOrderSuffixOnly(tail) {
   if (!compact) return true;
   if (isFollowPhrase(compact)) return true;
   return new RegExp(`^(?:${phrasePattern(ORDER_SUFFIX_PHRASES)})+$`, "u").test(compact);
+}
+
+function leftoverAfterOrderWords(text) {
+  let compact = normalizeMatchText(text);
+  compact = removePhrases(compact, [...FOLLOW_WORDS, ...ORDER_PHRASES]);
+  compact = compact.replace(/\d+(?:개|장|박스|상자|세트|셋트|벌)?/g, "");
+  compact = removePhrases(compact, Object.keys(QTY_WORDS));
+  compact = removePhrases(compact, ["조금만", "조금", "빨리", "바로", "지금", "제발", "많이"]);
+  return compact.replace(/[0-9]/g, "");
+}
+
+function extractSpokenProductName(text) {
+  let work = ` ${normalizeText(text)} `;
+  const phrases = [...FOLLOW_WORDS, ...ORDER_PHRASES].sort((a, b) => b.length - a.length);
+  for (const phrase of phrases) {
+    work = work.split(phrase).join(" ");
+  }
+  work = work.replace(/\d+\s*(개|장|박스|상자|세트|셋트|벌)?/gu, " ");
+  work = work.replace(/[~!.,?？♡♥❤^]/g, " ");
+  return work.replace(/\s+/g, " ").trim();
 }
 
 function hasOrderIntent(text) {
@@ -263,7 +303,7 @@ function extractFlexibleQty(text, def = 1) {
   const compact = normalizeCompact(text);
   let m = compact.match(/^(\d+)$/);
   if (m) return parseInt(m[1], 10);
-  m = String(text).match(/(\d+)\s*(개|장|세트|벌)?/);
+  m = String(text).match(/(\d+)\s*(개|장|세트|셋트|벌|박스|상자)?/);
   if (m) return parseInt(m[1], 10);
   if (QTY_WORDS[compact]) return QTY_WORDS[compact];
   const nums = String(text).match(/(\d+\.?|\.\d+)/g);
@@ -423,9 +463,16 @@ function hasExplicitQty(msg) {
   if (/^\d+\.\d+$/u.test(compact)) return true;
   if (/^\.*\d+\.?$/u.test(compact)) return true;
   if (/^\d+\s+\d+/u.test(msg)) return true;
-  if (/(\d+)\s*(개|장|세트|셋트|벌)/u.test(msg)) return true;
+  if (/(\d+)\s*(개|장|세트|셋트|벌|박스|상자)/u.test(msg)) return true;
   if (/[가-힣A-Za-z]+\s*\d+/u.test(msg)) return true;
   return false;
+}
+
+function hasUnitQty(msg) {
+  const compact = normalizeCompact(msg);
+  return /(\d+)\s*(개|장|세트|셋트|벌|박스|상자)/u.test(msg)
+    || /(\d+)(개|장|세트|셋트|벌|박스|상자)/u.test(compact)
+    || /(한개|두개|세개|네개|한장|두장)/u.test(compact);
 }
 
 function isCancelIntent(msg) {
@@ -575,8 +622,11 @@ module.exports = {
   isQuestionLike,
   isNoiseChat,
   isFollowPhrase,
+  parseFollowOrder,
   isOrderSuffixOnly,
   hasOrderIntent,
+  leftoverAfterOrderWords,
+  extractSpokenProductName,
   stripIntentWords,
   normalizeText,
   normalizeCompact,
@@ -596,6 +646,7 @@ module.exports = {
   registrationKey,
   isManagerStyleMessage,
   hasExplicitQty,
+  hasUnitQty,
   isCancelIntent,
   parseCancelQty,
   stripCancelWords,
