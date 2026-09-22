@@ -21,7 +21,10 @@ const {
   isBrowseDesireOnly,
   isNonPurchaseRequest,
   isStatusOrInquiry,
+  isDeferredPurchase,
+  isReactionComment,
   isQuestionLike,
+  isNonOrderChat,
   isNoiseChat,
   isOrderSuffixOnly,
   stripIntentWords,
@@ -201,13 +204,22 @@ class OrderEngine {
     if (new RegExp(`^${escProductCompact}${ORDER_SUFFIX_PATTERN}[!?,.]*$`, "u").test(compact)) {
       return { product, option: "", color: "", size: "", qty: 1, price: reg.price || 0, shotFile: reg.shotFile || "" };
     }
-    if (isStatusOrInquiry(text) || isQuestionLike(text)) return null;
-    let tail = "";
-    if (compact.startsWith(productCompact)) {
-      tail = compact.slice(productCompact.length);
-    }
+    if (isStatusOrInquiry(text) || isQuestionLike(text) || isDeferredPurchase(text) || isReactionComment(text) || isNonOrderChat(text)) return null;
+    const atStart = compact.startsWith(productCompact);
+    const tail = atStart ? compact.slice(productCompact.length) : "";
     if (isBrowseDesireOnly(tail)) return null;
-    if (hasOrderIntent(text) || isOrderSuffixOnly(tail)) {
+    if (atStart && (hasOrderIntent(text) || isOrderSuffixOnly(tail))) {
+      return {
+        product,
+        option: "",
+        color: "",
+        size: "",
+        qty: extractFlexibleQty(text, 1),
+        price: reg.price || 0,
+        shotFile: reg.shotFile || ""
+      };
+    }
+    if (!atStart && hasOrderIntent(text)) {
       return {
         product,
         option: "",
@@ -367,6 +379,7 @@ class OrderEngine {
   }
 
   parseLatestProductOrder(msg) {
+    if (isNonOrderChat(msg)) return null;
     const spoken = extractSpokenProductName(msg);
     const follow = parseFollowOrder(msg);
     const hasBareIntent = Boolean(follow) || hasOrderKeyword(msg) || hasUnitQty(msg);
@@ -395,7 +408,7 @@ class OrderEngine {
     const text = normalizeText(msg);
     if (!text) return [];
     if (isNonPurchaseRequest(text) || isBrowseDesireOnly(text)) return [];
-    if (isNoiseChat(text) || isQuestionLike(text) || isStatusOrInquiry(text)) return [];
+    if (isNoiseChat(text) || isNonOrderChat(text) || isQuestionLike(text) || isStatusOrInquiry(text) || isDeferredPurchase(text) || isReactionComment(text)) return [];
     if (QUESTION_RE.test(text) && !hasOrderKeyword(text)) return [];
     const mentionsRegistered = this.getAllRegistrations().some((reg) => {
       const name = reg.product || reg.number || "";

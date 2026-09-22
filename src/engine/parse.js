@@ -52,7 +52,7 @@ const NON_ORDER_PHRASES = [
   "입고싶어요", "입고싶어용", "입고싶어",
   "보여주세요", "보여주세용", "보여주세여", "보여줘요", "보여줄래요", "보여줄래", "보여주",
   "알려주세요", "알려줘요", "알려줄래",
-  "설명해주세요"
+  "설명해주세요", "해주세요", "해주세용", "해주세여", "해주셔요"
 ];
 
 const ORDER_SUFFIX_PHRASES = [
@@ -77,7 +77,7 @@ const COLOR_SIZE_TRAILING_RE = new RegExp(
   `(${phrasePattern([...ORDER_PHRASES, "사이즈", "컬러", "색상", "색", "번", "요", "개", "장"])})`,
   "g"
 );
-const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|맞나요|괜찮나요|입어도|안와요|안오네|문자|끝났나요|끝나나요|끝났어요|끝났습니까|마감인가요|품절인가요/u;
+const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|어케|맞나요|괜찮나요|입어도|안와요|안오네|문자|끝났나요|끝나나요|끝났어요|끝났습니까|마감인가요|품절인가요|주문하나요|하는법|하는방법/u;
 const QUESTION_END_RE = /(나요|는가요|인가요|일까요|을까요|인지요|인지|예요|에요|죠)\s*$/u;
 
 const STATUS_OR_INQUIRY_PHRASES = [
@@ -93,6 +93,29 @@ const STATUS_OR_INQUIRY_PHRASES = [
   "끝났나요", "끝나나요", "끝났어요", "끝났습니까", "끝났음", "끝인가요", "끝났",
   "마감인가요", "마감됐", "마감되었", "마감이야",
   "다팔렸", "다됐나요", "다됐어요", "품절인가요", "품절이야", "품절"
+];
+
+const DEFERRED_PURCHASE_PHRASES = [
+  "담에살게요", "다음에살게요", "나중에살게요",
+  "담에살께요", "다음에살께요", "나중에살께요",
+  "담에살게", "다음에살게", "나중에살게",
+  "담에살께", "다음에살께", "나중에살께",
+  "담에살래요", "다음에살래요", "나중에살래요",
+  "담에살래", "다음에살래", "나중에살래",
+  "담에살거요", "다음에살거요", "나중에살거요",
+  "담에살거", "다음에살거", "나중에살거",
+  "담에살", "다음에살", "나중에살",
+  "담에주문", "다음에주문", "나중에주문",
+  "담에구매", "다음에구매", "나중에구매",
+  "담에할게", "다음에할게", "나중에할게",
+  "다음번에살", "다음번엔살", "다음번에요"
+];
+
+const REACTION_PHRASES = [
+  "너무좋네요", "너무좋아요", "너무좋아", "너무맛있",
+  "좋네요", "좋아요", "맛있네요", "맛있어요", "맛있어보여", "맛있어",
+  "달아요", "달네요", "달콤", "예쁘네요", "예뻐요", "이쁘네요",
+  "최고예요", "최고에요", "최고", "대박", "존맛", "굿이요"
 ];
 const CANCEL_WORDS = ["취소", "삭제", "빼주세요", "빼줘", "안할게", "제외", "필요없어"];
 const CANCEL_PHRASES = [
@@ -157,6 +180,19 @@ function isNonPurchaseRequest(text) {
   return !ORDER_KEYWORD_RE.test(withoutBrowse);
 }
 
+function isReactionComment(text) {
+  if (hasOrderKeyword(text) || isFollowPhrase(text) || hasUnitQty(text)) return false;
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  return REACTION_PHRASES.some((phrase) => compact.includes(normalizeMatchText(phrase)));
+}
+
+function isDeferredPurchase(text) {
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  return DEFERRED_PURCHASE_PHRASES.some((phrase) => compact.includes(normalizeMatchText(phrase)));
+}
+
 function isStatusOrInquiry(text) {
   const compact = normalizeMatchText(text);
   if (!compact) return false;
@@ -166,7 +202,48 @@ function isStatusOrInquiry(text) {
   return !hasOrderKeyword(text);
 }
 
+function isReplayRequest(text) {
+  if (hasUnitQty(text)) return false;
+  const compact = normalizeMatchText(text);
+  if (/(한번더|한번 더|다시한번|다시해|다시보여|또보여|또한번)/u.test(compact) && !/주문/.test(compact)) return true;
+  return false;
+}
+
+function isStoreOrAppComplaint(text) {
+  const compact = normalizeMatchText(text);
+  if (/(안되네|안돼요|안됩니다|안돼요|안됨)/u.test(compact)) return true;
+  if (/(네이버|앱|스토어|스마트스토어|탐보|쿠팡|톡스토어|사이트)/u.test(compact)
+    && /(없네|없어요|없습니다|없네요|안되)/u.test(compact)) return true;
+  return false;
+}
+
+function isExistingOrderInquiry(text) {
+  const compact = normalizeMatchText(text);
+  if (/주문했/.test(compact) && /(오나|언제|배송|추석|추석|도착|이후)/u.test(compact)) return true;
+  if (/(추석이후|추석이후|언제와요|언제오나|이후오나)/u.test(compact) && !hasUnitQty(text)) return true;
+  return false;
+}
+
+function isNonOrderChat(text) {
+  return isHowToOrderQuestion(text)
+    || isDeferredPurchase(text)
+    || isReactionComment(text)
+    || isReplayRequest(text)
+    || isStoreOrAppComplaint(text)
+    || isExistingOrderInquiry(text);
+}
+
+function isHowToOrderQuestion(text) {
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  if (/(어케|어떻게|어떡해|어떤게|어떤거).{0,10}(주문|구매|사요|살수|결제)/u.test(compact)) return true;
+  if (/(주문|구매)(하나요|하는법|하는방법|은어떻게|은어케|는어떻게|는어케)/u.test(compact)) return true;
+  if (/[?？]/.test(String(text)) && /(어케|어떻게|어떡해|하나요|일까요|인가요)$/u.test(compact) && !hasUnitQty(text)) return true;
+  return false;
+}
+
 function isQuestionLike(text) {
+  if (isHowToOrderQuestion(text)) return true;
   if (hasOrderKeyword(text) || isFollowPhrase(text)) return false;
   const compact = normalizeMatchText(text);
   if (!compact) return false;
@@ -619,7 +696,11 @@ module.exports = {
   isBrowseDesireOnly,
   isNonPurchaseRequest,
   isStatusOrInquiry,
+  isDeferredPurchase,
+  isReactionComment,
   isQuestionLike,
+  isHowToOrderQuestion,
+  isNonOrderChat,
   isNoiseChat,
   isFollowPhrase,
   parseFollowOrder,
