@@ -1,7 +1,40 @@
 const fs = require("fs");
 const path = require("path");
-const { createCanvas } = require("canvas");
+const { createCanvas, registerFont } = require("canvas");
 const config = require("../config");
+
+const FONT_FAMILY = "LivoraKR";
+
+function registerKoreanFonts() {
+  const bundled = path.join(__dirname, "..", "..", "fonts");
+  const candidates = [
+    { file: path.join(bundled, "NotoSansKR-Regular.otf"), weight: "normal" },
+    { file: path.join(bundled, "NotoSansKR-Bold.otf"), weight: "bold" },
+    { file: "C:\\Windows\\Fonts\\malgun.ttf", weight: "normal" },
+    { file: "C:\\Windows\\Fonts\\malgunbd.ttf", weight: "bold" },
+    { file: "/usr/share/fonts/truetype/nanum/NanumGothic.ttf", weight: "normal" },
+    { file: "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", weight: "bold" }
+  ];
+  const registered = new Set();
+  for (const item of candidates) {
+    if (registered.has(item.weight) || !fs.existsSync(item.file)) continue;
+    try {
+      registerFont(item.file, { family: FONT_FAMILY, weight: item.weight });
+      registered.add(item.weight);
+    } catch (err) {
+      console.error("[font]", path.basename(item.file), err.message);
+    }
+  }
+  if (!registered.size) {
+    console.error("[font] 한글 폰트를 찾지 못했습니다. 정산서 글자가 깨질 수 있습니다.");
+  }
+}
+
+registerKoreanFonts();
+
+function krFont(size, weight = "normal") {
+  return `${weight === "bold" ? "bold " : ""}${size}px "${FONT_FAMILY}", "Malgun Gothic", sans-serif`;
+}
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -27,13 +60,13 @@ async function renderChatShot({ sessionId, platform, channelId, productLabel, ch
   ctx.fillRect(0, 0, 8, height);
 
   ctx.fillStyle = "#e8c37a";
-  ctx.font = "600 22px sans-serif";
+  ctx.font = krFont(22, "bold");
   ctx.fillText("LIVORA CHAT CAPTURE", 40, 48);
   ctx.fillStyle = "#f4f1ea";
-  ctx.font = "bold 36px sans-serif";
+  ctx.font = krFont(36, "bold");
   ctx.fillText(String(productLabel || "채팅 기록").slice(0, 28), 40, 98);
   ctx.fillStyle = "#8b8794";
-  ctx.font = "20px sans-serif";
+  ctx.font = krFont(20);
   ctx.fillText(`${platform}  ·  ${channelId}  ·  ${new Date().toLocaleString("ko-KR")}`, 40, 138);
 
   rows.forEach((chat, i) => {
@@ -41,10 +74,10 @@ async function renderChatShot({ sessionId, platform, channelId, productLabel, ch
     ctx.fillStyle = i % 2 === 0 ? "#14151c" : "#101218";
     ctx.fillRect(28, y, width - 56, rowH - 8);
     ctx.fillStyle = "#7ee0c6";
-    ctx.font = "bold 20px sans-serif";
+    ctx.font = krFont(20, "bold");
     ctx.fillText(String(chat.nick || "").slice(0, 16), 48, y + 32);
     ctx.fillStyle = "#f4f1ea";
-    ctx.font = "20px sans-serif";
+    ctx.font = krFont(20);
     ctx.fillText(String(chat.msg || "").slice(0, 42), 250, y + 32);
   });
 
@@ -88,22 +121,22 @@ async function renderInvoices(sessionId, orders) {
     const total = items.reduce((sum, i) => sum + Number(i.amount || 0), 0);
 
     ctx.fillStyle = "#6f42c1";
-    ctx.font = "bold 42px sans-serif";
+    ctx.font = krFont(42, "bold");
     ctx.fillText(`${nick}님`, 60, 85);
-    ctx.font = "bold 32px sans-serif";
+    ctx.font = krFont(32, "bold");
     ctx.fillText(dateText, 60, 145);
     ctx.fillStyle = "#222222";
-    ctx.font = "28px sans-serif";
+    ctx.font = krFont(28);
     ctx.fillText("구매해 주셔서 감사합니다", 60, 195);
 
     ctx.fillStyle = "#7d65b1";
-    ctx.font = "24px sans-serif";
+    ctx.font = krFont(24);
     ctx.fillText("(기본배송비 3,500원 별도)", 1010, 70);
     ctx.fillStyle = "#222222";
-    ctx.font = "bold 28px sans-serif";
+    ctx.font = krFont(28, "bold");
     ctx.fillText("합계", 1030, 125);
     ctx.fillStyle = "#6f42c1";
-    ctx.font = "bold 54px sans-serif";
+    ctx.font = krFont(54, "bold");
     ctx.fillText(`₩${Number(total).toLocaleString("ko-KR")}`, 980, 190);
 
     const tableX = 40;
@@ -117,7 +150,7 @@ async function renderInvoices(sessionId, orders) {
     ctx.strokeStyle = "#d9d0ea";
     ctx.strokeRect(tableX, tableY, width - 80, tableHeaderHeight);
     ctx.fillStyle = "#222222";
-    ctx.font = "bold 24px sans-serif";
+    ctx.font = krFont(24, "bold");
     ctx.fillText("닉네임", tableX + 28, tableY + 35);
     ctx.fillText("상품명", tableX + colNick + 140, tableY + 35);
     ctx.fillText("수량", tableX + colNick + colProduct + 35, tableY + 35);
@@ -133,7 +166,7 @@ async function renderInvoices(sessionId, orders) {
       ctx.stroke();
       const productText = item.option ? `${item.product} ${item.option}` : `${item.product}`;
       ctx.fillStyle = "#222222";
-      ctx.font = "24px sans-serif";
+      ctx.font = krFont(24);
       ctx.fillText(String(nick), tableX + 28, y + 37);
       ctx.fillText(String(productText).slice(0, 32), tableX + colNick + 20, y + 37);
       ctx.fillText(String(item.qty), tableX + colNick + colProduct + 45, y + 37);
@@ -142,7 +175,7 @@ async function renderInvoices(sessionId, orders) {
     });
 
     ctx.fillStyle = "#222222";
-    ctx.font = "28px sans-serif";
+    ctx.font = krFont(28);
     ctx.fillText("언제나 감사합니다 :)", width / 2 - 110, totalHeight - 45);
 
     const safeNick = String(nick).replace(/[\\/:*?"<>|]/g, "_");

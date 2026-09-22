@@ -252,6 +252,7 @@ th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--li
 }
 .stack-item button { background: transparent; color: var(--danger); border: 0; cursor: pointer; }
 .stack-item button.edit-btn { color: var(--gold); }
+.stack-item span { min-width: 0; word-break: break-word; }
 .form-actions { display: flex; gap: 8px; margin: 8px 0 0; }
 .form-actions button { width: auto; flex: 1; }
 .file-upload { margin: 10px 0 0; }

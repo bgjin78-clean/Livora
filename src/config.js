@@ -27,5 +27,6 @@ module.exports = {
   dbPath: path.join(dataDir, "livora.db"),
   shotsDir: path.join(dataDir, "shots"),
   invoicesDir: path.join(dataDir, "invoices"),
-  exportsDir: path.join(dataDir, "exports")
+  exportsDir: path.join(dataDir, "exports"),
+  adminCopiesDir: path.join(dataDir, "admin-copies")
 };

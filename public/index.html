@@ -146,7 +146,7 @@
       </section>
 
       <section id="filesPage" class="page hidden">
-        <p class="lede small">주문 엑셀·정산서·채팅 엑셀은 지금 방송, 또는 다음 수집 전까지 직전 방송을 받습니다.</p>
+        <p class="lede small">주문 엑셀·정산서·채팅 엑셀은 지금 방송, 또는 다음 수집 전까지 직전 방송을 받습니다. 받으면 관리자 보관함에도 같은 파일이 저장됩니다.</p>
         <p id="filesHint" class="register-hint">받을 방송을 확인하는 중</p>
         <div class="control-row">
           <button id="excelBtn" class="gold-btn" type="button">주문 엑셀</button>
@@ -168,6 +168,7 @@
           <button type="button" class="admin-tab-btn active" data-admin-tab="accounts">계정</button>
           <button type="button" class="admin-tab-btn" data-admin-tab="channels">채널 승인</button>
           <button type="button" class="admin-tab-btn" data-admin-tab="seller-data">셀러 주문·채팅</button>
+          <button type="button" class="admin-tab-btn" data-admin-tab="files">셀러 파일</button>
           <button type="button" class="admin-tab-btn" data-admin-tab="logs">접속 로그</button>
         </div>
         <div id="adminTabAccounts" class="admin-tab-page">
@@ -241,6 +242,14 @@
                 <div id="sellerChatList" class="feed"></div>
               </div>
             </div>
+          </article>
+        </div>
+        <div id="adminTabFiles" class="admin-tab-page hidden">
+          <article class="panel">
+            <h3>셀러 파일</h3>
+            <p class="register-hint">셀러가 방송을 종료하거나 주문 엑셀·채팅 엑셀·정산서를 받으면 같은 파일이 여기에 남습니다.</p>
+            <select id="adminFileUser"></select>
+            <div id="adminFileList" class="stack-list"></div>
           </article>
         </div>
         <div id="adminTabLogs" class="admin-tab-page hidden">

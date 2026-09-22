@@ -14,6 +14,7 @@ function open() {
   fs.mkdirSync(config.shotsDir, { recursive: true });
   fs.mkdirSync(config.invoicesDir, { recursive: true });
   fs.mkdirSync(config.exportsDir, { recursive: true });
+  fs.mkdirSync(config.adminCopiesDir, { recursive: true });
 
   db = new Database(config.dbPath);
   db.pragma("journal_mode = WAL");
@@ -111,6 +112,20 @@ function open() {
       action TEXT NOT NULL,
       detail TEXT,
       ip TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_files (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      username TEXT,
+      session_id TEXT,
+      platform TEXT,
+      channel_id TEXT,
+      kind TEXT NOT NULL,
+      source TEXT,
+      filename TEXT NOT NULL,
+      stored_name TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
   `);
@@ -638,6 +653,40 @@ function markChatAsOrder(sessionId, chatKey) {
   `).run(sessionId, chatKey);
 }
 
+function insertAdminFile(row) {
+  const result = open().prepare(`
+    INSERT INTO admin_files (user_id, username, session_id, platform, channel_id, kind, source, filename, stored_name, created_at)
+    VALUES (@user_id, @username, @session_id, @platform, @channel_id, @kind, @source, @filename, @stored_name, @created_at)
+  `).run({
+    user_id: row.user_id || null,
+    username: row.username || "",
+    session_id: row.session_id || "",
+    platform: row.platform || "",
+    channel_id: row.channel_id || "",
+    kind: row.kind,
+    source: row.source || "download",
+    filename: row.filename,
+    stored_name: row.stored_name,
+    created_at: now()
+  });
+  return getAdminFile(result.lastInsertRowid);
+}
+
+function getAdminFile(id) {
+  return open().prepare("SELECT * FROM admin_files WHERE id = ?").get(id);
+}
+
+function listAdminFiles({ userId, limit = 300 } = {}) {
+  if (userId) {
+    return open().prepare(`
+      SELECT * FROM admin_files WHERE user_id = ? ORDER BY id DESC LIMIT ?
+    `).all(userId, limit);
+  }
+  return open().prepare(`
+    SELECT * FROM admin_files ORDER BY id DESC LIMIT ?
+  `).all(limit);
+}
+
 module.exports = {
   open,
   getUserByUsername,
@@ -665,6 +714,9 @@ module.exports = {
   deleteProductsForSession,
   insertLog,
   listLogs,
+  insertAdminFile,
+  getAdminFile,
+  listAdminFiles,
   insertAlias,
   insertChat,
   upsertOrder,

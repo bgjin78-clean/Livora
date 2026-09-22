@@ -7,6 +7,8 @@ const { captureOrderScreen, captureProductScreen } = require("../export/screensh
 const { renderInvoices } = require("../export/images");
 const { sendSessionMail } = require("../export/mail");
 const { excelFileName } = require("../export/fileName");
+const { archiveSellerFile } = require("../export/archive");
+const path = require("path");
 const { startTikTok } = require("./tiktok");
 const { startYouTube } = require("./youtube");
 
@@ -142,21 +144,50 @@ function invoiceOrdersFromEngine(session) {
 }
 
 async function finishSessionFiles(session) {
+  const seller = db.getUserById(session.userId);
   const files = [];
   try {
     const excelPath = await writeExcel(session.id);
-    files.push({ filename: excelFileName({ seller: db.getUserById(session.userId), kind: "orders" }), path: excelPath });
+    const filename = excelFileName({ seller, kind: "orders" });
+    files.push({ filename, path: excelPath });
+    archiveSellerFile({
+      seller,
+      session,
+      kind: "orders",
+      sourcePath: excelPath,
+      filename,
+      source: "stop"
+    });
   } catch (err) {
     console.error("[stop excel]", err.message);
   }
   try {
     const chatPath = await writeChatExcel(session.id);
-    files.push({ filename: excelFileName({ seller: db.getUserById(session.userId), kind: "chats" }), path: chatPath });
+    const filename = excelFileName({ seller, kind: "chats" });
+    files.push({ filename, path: chatPath });
+    archiveSellerFile({
+      seller,
+      session,
+      kind: "chats",
+      sourcePath: chatPath,
+      filename,
+      source: "stop"
+    });
   } catch (err) {
     console.error("[stop chat excel]", err.message);
   }
   try {
-    await renderInvoices(session.id, invoiceOrdersFromEngine(session));
+    const { files: invoices } = await renderInvoices(session.id, invoiceOrdersFromEngine(session));
+    for (const filePath of invoices || []) {
+      archiveSellerFile({
+        seller,
+        session,
+        kind: "invoices",
+        sourcePath: filePath,
+        filename: path.basename(filePath),
+        source: "stop"
+      });
+    }
   } catch (err) {
     console.error("[stop invoices]", err.message);
   }

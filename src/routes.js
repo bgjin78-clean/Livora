@@ -9,6 +9,7 @@ const { writeExcel, writeChatExcel, writeUserDayChatExcel } = require("./export/
 const { renderInvoices } = require("./export/images");
 const { listShotFiles } = require("./export/screenshot");
 const { excelFileName } = require("./export/fileName");
+const { archiveSellerFile } = require("./export/archive");
 const config = require("./config");
 
 function createRouter(broadcast) {
@@ -199,6 +200,22 @@ function createRouter(broadcast) {
 
   router.get("/admin/logs", auth.requireAuth, auth.requireAdmin, (req, res) => {
     res.json({ ok: true, logs: db.listLogs(200) });
+  });
+
+  router.get("/admin/files", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    const userId = Number(req.query.userId || 0);
+    res.json({
+      ok: true,
+      files: db.listAdminFiles({ userId: userId || undefined, limit: 300 })
+    });
+  });
+
+  router.get("/admin/files/:id", auth.requireAuth, auth.requireAdmin, (req, res) => {
+    const row = db.getAdminFile(Number(req.params.id));
+    if (!row) return res.status(404).json({ ok: false, message: "파일을 찾지 못했습니다." });
+    const filePath = path.join(config.adminCopiesDir, path.basename(row.stored_name));
+    if (!fs.existsSync(filePath)) return res.status(404).json({ ok: false, message: "파일이 없습니다." });
+    res.download(filePath, row.filename || row.stored_name);
   });
 
   router.get("/admin/channels", auth.requireAuth, auth.requireAdmin, (req, res) => {
@@ -398,7 +415,18 @@ function createRouter(broadcast) {
     }
     const filePath = await writeExcel(session.id);
     const owner = db.getUserById(session.user_id);
-    res.download(filePath, excelFileName({ seller: owner, kind: "orders" }));
+    const filename = excelFileName({ seller: owner, kind: "orders" });
+    if (req.user.role !== "admin") {
+      archiveSellerFile({
+        seller: owner,
+        session,
+        kind: "orders",
+        sourcePath: filePath,
+        filename,
+        source: "download"
+      });
+    }
+    res.download(filePath, filename);
   });
 
   router.get("/export/chats", auth.requireAuth, async (req, res) => {
@@ -407,7 +435,18 @@ function createRouter(broadcast) {
     const platform = live?.platform || latest?.platform || "";
     const channelId = live?.channelId || latest?.channel_id || "";
     const filePath = await writeUserDayChatExcel(req.user.id, { platform, channelId });
-    res.download(filePath, excelFileName({ seller: req.user, kind: "chats" }));
+    const filename = excelFileName({ seller: req.user, kind: "chats" });
+    if (req.user.role !== "admin") {
+      archiveSellerFile({
+        seller: req.user,
+        session: live || latest || {},
+        kind: "chats",
+        sourcePath: filePath,
+        filename,
+        source: "download"
+      });
+    }
+    res.download(filePath, filename);
   });
 
   router.get("/sessions/:id/export/invoices", auth.requireAuth, async (req, res) => {
@@ -427,6 +466,19 @@ function createRouter(broadcast) {
           amount: o.amount
         }));
     const { files } = await renderInvoices(session.id, orders);
+    if (req.user.role !== "admin") {
+      const owner = db.getUserById(session.user_id);
+      for (const filePath of files || []) {
+        archiveSellerFile({
+          seller: owner,
+          session,
+          kind: "invoices",
+          sourcePath: filePath,
+          filename: path.basename(filePath),
+          source: "download"
+        });
+      }
+    }
     res.json({ ok: true, files: files.map((f) => path.basename(f)) });
   });
 

@@ -606,6 +606,7 @@ function setAdminTab(tab) {
     accounts: "adminTabAccounts",
     channels: "adminTabChannels",
     "seller-data": "adminTabSellerData",
+    files: "adminTabFiles",
     logs: "adminTabLogs"
   };
   Object.entries(pages).forEach(([name, id]) => {
@@ -615,6 +616,7 @@ function setAdminTab(tab) {
     btn.classList.toggle("active", btn.dataset.adminTab === tab);
   });
   if (tab === "seller-data" && $("sellerDataUser").value) loadSellerData();
+  if (tab === "files") loadAdminFiles();
   if (tab === "logs") loadAdminLogs();
 }
 
@@ -643,6 +645,7 @@ async function loadAdmin() {
     </div>
   `).join("");
   if ($("sellerDataUser").value) loadSellerData();
+  if (!$("adminTabFiles").classList.contains("hidden")) loadAdminFiles();
   await loadAdminStats();
 }
 
@@ -659,6 +662,47 @@ async function loadAdminLogs() {
           </div>
         `).join("")
       : `<div class="stack-item">아직 로그가 없습니다.</div>`;
+  } catch (err) {
+    box.innerHTML = `<div class="stack-item">${escapeAttr(err.message)}</div>`;
+  }
+}
+
+function adminFileKindLabel(kind) {
+  return { orders: "주문 엑셀", chats: "채팅 엑셀", invoices: "정산서" }[kind] || kind || "파일";
+}
+
+function adminFileSourceLabel(source) {
+  return { download: "다운로드", stop: "방송 종료" }[source] || source || "";
+}
+
+function fillAdminFileUsers() {
+  const sel = $("adminFileUser");
+  if (!sel) return;
+  const current = sel.value;
+  const sellers = (state.adminUsers || []).filter((u) => u.role === "seller");
+  sel.innerHTML = [`<option value="">전체 셀러</option>`]
+    .concat(sellers.map((u) => `<option value="${u.id}">${escapeAttr(u.name || u.username)} (${escapeAttr(u.username)})</option>`))
+    .join("");
+  if ([...sel.options].some((opt) => opt.value === current)) sel.value = current;
+}
+
+async function loadAdminFiles() {
+  const box = $("adminFileList");
+  if (!box) return;
+  fillAdminFileUsers();
+  const userId = $("adminFileUser")?.value;
+  try {
+    const qs = userId ? `?userId=${encodeURIComponent(userId)}` : "";
+    const data = await api(`/api/admin/files${qs}`);
+    const files = data.files || [];
+    box.innerHTML = files.length
+      ? files.map((row) => `
+          <div class="stack-item">
+            <span>${escapeAttr(row.created_at || "")} · ${escapeAttr(row.username || "-")} · ${escapeAttr(adminFileKindLabel(row.kind))} · ${escapeAttr(adminFileSourceLabel(row.source))}<br>${escapeAttr(row.filename || row.stored_name)}</span>
+            <button class="edit-btn" type="button" data-admin-file="${row.id}" data-admin-file-name="${escapeAttr(row.filename || row.stored_name)}">받기</button>
+          </div>
+        `).join("")
+      : `<div class="stack-item">아직 보관된 파일이 없습니다. 셀러가 방송을 종료하거나 엑셀·정산서를 받으면 여기에 남습니다.</div>`;
   } catch (err) {
     box.innerHTML = `<div class="stack-item">${escapeAttr(err.message)}</div>`;
   }
@@ -1283,6 +1327,20 @@ $("sellerDataUser").onchange = () => {
   $("sellerDataSession").innerHTML = "";
   loadSellerData().catch((err) => alert(err.message));
 };
+
+$("adminFileUser").onchange = () => {
+  loadAdminFiles().catch((err) => alert(err.message));
+};
+
+$("adminFileList").addEventListener("click", async (e) => {
+  const id = e.target.dataset.adminFile;
+  if (!id) return;
+  try {
+    await downloadFile(`/api/admin/files/${id}`, e.target.dataset.adminFileName || "file");
+  } catch (err) {
+    alert(err.message);
+  }
+});
 
 $("sellerDataSession").onchange = () => {
   loadSellerData().catch((err) => alert(err.message));
