@@ -10,7 +10,9 @@ const { renderInvoices } = require("./export/images");
 const { listShotFiles } = require("./export/screenshot");
 const { excelFileName } = require("./export/fileName");
 const { archiveSellerFile } = require("./export/archive");
+const { mailEnabled } = require("./export/mail");
 const config = require("./config");
+const { isYouTubeAddress, normalizeYouTubeChannel } = require("./collectors/youtube");
 
 function createRouter(broadcast) {
   const router = express.Router();
@@ -82,7 +84,8 @@ function createRouter(broadcast) {
       channels: req.user.role === "admin" ? db.listChannels() : db.listChannels(req.user.id),
       sessions,
       session: current,
-      lastSession: current || lastSessionFor(req.user.id)
+      lastSession: current || lastSessionFor(req.user.id),
+      mailReady: mailEnabled(req.user)
     });
   });
 
@@ -223,12 +226,22 @@ function createRouter(broadcast) {
   });
 
   router.post("/admin/channels", auth.requireAuth, auth.requireAdmin, (req, res) => {
-    const { userId, platform, channelId, label } = req.body || {};
+    const { userId, platform, label } = req.body || {};
+    let channelId = String(req.body?.channelId || "").trim();
     if (!userId || !platform || !channelId) {
       return res.status(400).json({ ok: false, message: "계정, 플랫폼, 채널 ID가 필요합니다." });
     }
     if (!["tiktok", "youtube"].includes(platform)) {
       return res.status(400).json({ ok: false, message: "플랫폼은 tiktok 또는 youtube만 가능합니다." });
+    }
+    if (platform === "youtube") {
+      if (isYouTubeAddress(channelId)) {
+        return res.status(400).json({ ok: false, message: "유튜브는 주소로 승인할 수 없습니다. 채널 아이디(UC...)나 닉네임을 넣으세요." });
+      }
+      channelId = normalizeYouTubeChannel(channelId);
+      if (!channelId) {
+        return res.status(400).json({ ok: false, message: "유튜브 채널 아이디나 닉네임을 입력하세요." });
+      }
     }
     try {
       const channel = db.addChannel({ userId, platform, channelId, label });
@@ -268,7 +281,16 @@ function createRouter(broadcast) {
     writeLog(req, "SESSION_STOP", platform || stopped.map((row) => row?.id).join(","));
     const remaining = collector.publicSessions(req.user.id);
     const lastSession = remaining[0] || lastSessionFor(req.user.id, platform || undefined);
-    res.json({ ok: true, sessions: remaining, session: remaining[0] || lastSession, lastSession });
+    const mail = stopped.find((row) => row?.mail && !row.mail.skipped)?.mail || stopped[0]?.mail || null;
+    const files = stopped.flatMap((row) => row?.files || []);
+    res.json({
+      ok: true,
+      sessions: remaining,
+      session: remaining[0] || lastSession,
+      lastSession,
+      mail,
+      files
+    });
   });
 
   router.post("/sessions/products", auth.requireAuth, async (req, res) => {
@@ -289,7 +311,7 @@ function createRouter(broadcast) {
             stock: body.stock
           }
         : (body.payload || "");
-      const result = await collector.registerProduct(live, input);
+      const result = await collector.registerProduct(live, input, body.image);
       if (!result.ok) return res.status(400).json(result);
       res.json(result);
     } catch (err) {
@@ -302,11 +324,33 @@ function createRouter(broadcast) {
     const live = liveFor(req);
     if (!live) return res.status(400).json({ ok: false, message: "먼저 수집을 시작하세요." });
     try {
-      const result = await collector.capturePendingProductShot(live, req.body?.name || "F2");
+      const result = await collector.capturePendingProductShot(live, req.body?.name || "F2", req.body?.image);
       if (!result.ok) return res.status(400).json(result);
       res.json(result);
     } catch (err) {
       res.status(400).json({ ok: false, message: err.message || "상품 화면을 찍지 못했습니다." });
+    }
+  });
+
+  router.post("/sessions/order-shot", auth.requireAuth, (req, res) => {
+    if (req.user.role === "admin") {
+      return res.status(400).json({ ok: false, message: "관리자 화면에서는 캡처하지 않습니다." });
+    }
+    const byId = req.body?.sessionId ? collector.getSession(String(req.body.sessionId)) : null;
+    const live = (byId && byId.userId === req.user.id) ? byId : liveFor(req);
+    if (!live) return res.status(400).json({ ok: false, message: "먼저 수집을 시작하세요." });
+    try {
+      const shot = collector.saveClientOrderShot(live, {
+        uid: req.body?.uid,
+        nickname: req.body?.nickname,
+        product: req.body?.product,
+        option: req.body?.option,
+        message: req.body?.message
+      }, req.body?.image);
+      broadcast(req.user.id, "order-shot", shot);
+      res.json({ ok: true, shotFile: shot.shotFile });
+    } catch (err) {
+      res.status(400).json({ ok: false, message: err.message || "주문 화면을 저장하지 못했습니다." });
     }
   });
 

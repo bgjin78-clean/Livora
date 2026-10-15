@@ -254,6 +254,14 @@ function chatDate(chat) {
   return chatStamp(chat).slice(0, 10);
 }
 
+function exportFileStem(fileStem) {
+  return String(fileStem || "export")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 150) || "export";
+}
+
 async function writeChatRows(chats, fileStem) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("채팅");
@@ -270,8 +278,9 @@ async function writeChatRows(chats, fileStem) {
     });
     if (chat.is_order) paintOrderCell(sheet, row, "msg");
   }
-  const day = chatDate(chats[chats.length - 1] || {}) || new Date().toISOString().slice(0, 10);
-  const filePath = path.join(config.exportsDir, `${fileStem}-chats-${day}.xlsx`);
+  const day = (chatDate(chats[chats.length - 1] || {}) || new Date().toISOString().slice(0, 10))
+    .replace(/[^\d-]/g, "") || new Date().toISOString().slice(0, 10);
+  const filePath = path.join(config.exportsDir, `${exportFileStem(fileStem)}-chats-${day}.xlsx`);
   await workbook.xlsx.writeFile(filePath);
   return filePath;
 }

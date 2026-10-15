@@ -7,6 +7,7 @@ const COLORS = {
   "블루": "블루", "파": "블루", "파랑": "블루", "소라": "소라",
   "그레이": "그레이", "회": "그레이",
   "차콜": "차콜", "먹색": "차콜",
+  "차폴": "차폴", "차": "차폴",
   "핑크": "핑크", "카키": "카키", "브라운": "브라운",
   "레드": "레드", "빨강": "레드",
   "연청": "연청", "중청": "중청", "진청": "진청",
@@ -78,7 +79,7 @@ const COLOR_SIZE_TRAILING_RE = new RegExp(
   "g"
 );
 const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|어케|맞나요|괜찮나요|입어도|안와요|안오네|문자|끝났나요|끝나나요|끝났어요|끝났습니까|마감인가요|품절인가요|주문하나요|하는법|하는방법/u;
-const QUESTION_END_RE = /(나요|는가요|인가요|일까요|을까요|인지요|인지|예요|에요|죠)\s*$/u;
+const QUESTION_END_RE = /(되는건가여|되는건가요|되는건가용|건가여|건가요|건가용|건가유|건지요|건지|건가|인가요|인가여|일까요|을까요|될까요|될까|되나요|되나여|되는지요|되는지|되나|나요|나여|나용|나유|까요|까여|까용|인지요|인지|예요|에요|지요|지여|죠|가요|가여|가용|가유)\s*$/u;
 
 const STATUS_OR_INQUIRY_PHRASES = [
   "오늘도착", "도착했는", "도착했", "도착",
@@ -143,6 +144,11 @@ function normalizeCompact(text) {
   return String(text || "").replace(/\s+/g, "");
 }
 
+function dottedSelfQtyKey(compact) {
+  const m = String(compact || "").match(/^\.*(\d+)\.*$/);
+  return m ? m[1] : compact;
+}
+
 function escapeRegex(str) {
   return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -199,7 +205,8 @@ function isStatusOrInquiry(text) {
   if (!STATUS_OR_INQUIRY_PHRASES.some((phrase) => compact.includes(normalizeMatchText(phrase)))) {
     return false;
   }
-  return !hasOrderKeyword(text);
+  if (!hasOrderKeyword(text)) return true;
+  return QUESTION_END_RE.test(compact) || /[?？]/.test(String(text));
 }
 
 function isReplayRequest(text) {
@@ -236,16 +243,20 @@ function isNonOrderChat(text) {
 function isHowToOrderQuestion(text) {
   const compact = normalizeMatchText(text);
   if (!compact) return false;
-  if (/(어케|어떻게|어떡해|어떤게|어떤거).{0,10}(주문|구매|사요|살수|결제)/u.test(compact)) return true;
-  if (/(주문|구매)(하나요|하는법|하는방법|은어떻게|은어케|는어떻게|는어케)/u.test(compact)) return true;
-  if (/[?？]/.test(String(text)) && /(어케|어떻게|어떡해|하나요|일까요|인가요)$/u.test(compact) && !hasUnitQty(text)) return true;
+  if (hasExplicitQty(text)) return false;
+  if (/(어케|어떻게|어떡해|어떤게|어떤거).{0,12}(주문|구매|사요|살수|결제)/u.test(compact)) return true;
+  if (/(주문|구매)(하나요|하는법|하는방법|은어떻게|은어케|는어떻게|는어케|하면)/u.test(compact)
+    && (QUESTION_END_RE.test(compact) || /[?？]/.test(String(text)) || /(되|되나|될까|가능|건가)/u.test(compact))) return true;
+  if (/[?？]/.test(String(text)) && /(어케|어떻게|어떡해|하나요|일까요|인가요|건가|가여|가요|나여|나요)$/u.test(compact)) return true;
+  if (/[?？]/.test(String(text)) && /(어디|언제|왜|뭐|무슨|어떻게|홈페이지|사이트)/u.test(compact)) return true;
   return false;
 }
 
 function isQuestionLike(text) {
   if (isHowToOrderQuestion(text)) return true;
-  if (hasOrderKeyword(text) || isFollowPhrase(text)) return false;
   const compact = normalizeMatchText(text);
+  if (compact && QUESTION_END_RE.test(compact) && !hasExplicitQty(text)) return true;
+  if (hasOrderKeyword(text) || isFollowPhrase(text)) return false;
   if (!compact) return false;
   if (QUESTION_RE.test(text) || QUESTION_RE.test(compact)) return true;
   if (QUESTION_END_RE.test(compact)) return true;
@@ -371,6 +382,13 @@ function getOptionAliases(opt) {
   if (weight) {
     const n = weight[1];
     add(`${n}kg`, `${n}키로`, `${n}킬로`, `${n}근`);
+  }
+  const canonColor = COLORS[raw] || COLORS[opt] || (Object.values(COLORS).includes(String(opt || "")) ? opt : "");
+  if (canonColor) {
+    add(canonColor);
+    for (const [alias, canon] of Object.entries(COLORS)) {
+      if (canon === canonColor) add(alias);
+    }
   }
   return Array.from(aliases);
 }
@@ -605,7 +623,7 @@ function takeAliasFromStart(work, map, skip) {
     if (skip && skip.has(alias)) continue;
     const needle = alias.toLowerCase();
     if (!lower.startsWith(needle)) continue;
-    if (alias.length === 1 && /[가-힣]/.test(alias)) {
+    if (alias.length === 1 && /[가-힣]/.test(alias) && alias !== "차") {
       const after = work.slice(alias.length);
       const sizeFollows = aliasKeys(SIZE_ALIAS).some((size) =>
         after.toLowerCase().startsWith(String(size).toLowerCase())
@@ -711,6 +729,7 @@ module.exports = {
   stripIntentWords,
   normalizeText,
   normalizeCompact,
+  dottedSelfQtyKey,
   normalizeMatchText,
   escapeRegex,
   toMoney,

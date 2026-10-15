@@ -12,6 +12,7 @@ const {
   isSafeImmediateQty,
   normalizeText,
   normalizeCompact,
+  dottedSelfQtyKey,
   normalizeMatchText,
   escapeRegex,
   hasOrderKeyword,
@@ -72,12 +73,13 @@ class OrderEngine {
   }
 
   isDup(uid, msg) {
-    const compact = normalizeCompact(msg);
+    const compact = dottedSelfQtyKey(normalizeCompact(msg));
     const key = `${uid}::${compact}`;
     const nowMs = Date.now();
     const isShortOrderLike =
-      /^\.?\d+\.?$/.test(compact) ||
-      /^\d+\.\d+$/.test(compact) ||
+      /^\d+$/.test(compact) ||
+      /^\.?\d+\.?$/.test(normalizeCompact(msg)) ||
+      /^\d+\.\d+$/.test(normalizeCompact(msg)) ||
       /(\d+)\s+(\d+)/u.test(msg) ||
       /(\d+)\s*(개|장|세트|셋트|벌)/u.test(msg) ||
       /^[가-힣A-Za-z]+\d+$/u.test(compact);
@@ -379,7 +381,7 @@ class OrderEngine {
   }
 
   parseLatestProductOrder(msg) {
-    if (isNonOrderChat(msg)) return null;
+    if (isNonOrderChat(msg) || isQuestionLike(msg)) return null;
     const spoken = extractSpokenProductName(msg);
     const follow = parseFollowOrder(msg);
     const hasBareIntent = Boolean(follow) || hasOrderKeyword(msg) || hasUnitQty(msg);

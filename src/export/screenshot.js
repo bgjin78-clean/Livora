@@ -54,17 +54,48 @@ function attachShot(engine, payload, fileName) {
   db.updateOrderShot(engine.sessionId, String(payload.uid), getOrderKey(item), fileName);
 }
 
-async function writeShot(sessionId, payload, seller) {
+const MAX_UPLOAD = 3_500_000;
+
+function decodeImage(dataUrl) {
+  const raw = String(dataUrl || "").replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, "");
+  if (!raw) throw new Error("캡처 이미지가 없습니다.");
+  const buf = Buffer.from(raw, "base64");
+  if (!buf.length) throw new Error("캡처 이미지가 없습니다.");
+  if (buf.length > MAX_UPLOAD) throw new Error("캡처 파일이 너무 큽니다.");
+  return buf;
+}
+
+function writeShotFile(sessionId, fileName, buffer) {
   const dir = path.join(config.shotsDir, sessionId);
   fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, fileName), buffer);
+  return fileName;
+}
+
+async function writeShot(sessionId, payload, seller) {
   const fileName = orderShotFileName({
     seller,
     nick: payload.nickname || payload.uid,
     product: payload.product
   });
-  const filePath = path.join(dir, fileName);
   const buf = await grabDesktop();
-  fs.writeFileSync(filePath, buf);
+  return writeShotFile(sessionId, fileName, buf);
+}
+
+function saveUploadedOrderShot({ engine, seller, payload, buffer }) {
+  const fileName = orderShotFileName({
+    seller,
+    nick: payload.nickname || payload.uid,
+    product: payload.product
+  });
+  writeShotFile(engine.sessionId, fileName, buffer);
+  attachShot(engine, payload, fileName);
+  return fileName;
+}
+
+function saveUploadedProductShot({ sessionId, seller, productName = "F2", buffer }) {
+  const fileName = productShotFileName({ seller, product: productName });
+  writeShotFile(sessionId, fileName, buffer);
   return fileName;
 }
 
@@ -102,6 +133,50 @@ function listShotFiles(sessionId) {
     .map((row) => row.file);
 }
 
+const SHOT_KEEP_MS = 24 * 60 * 60 * 1000;
+
+function isShotFolderExpired(session, dirStat, now = Date.now()) {
+  if (session && session.status === "running" && !session.stopped_at) return false;
+  const stoppedAt = session?.stopped_at || "";
+  if (stoppedAt) {
+    const t = Date.parse(stoppedAt);
+    return Number.isFinite(t) && now - t >= SHOT_KEEP_MS;
+  }
+  if (session && session.status !== "running") {
+    const t = Date.parse(session.started_at || "");
+    return Number.isFinite(t) && now - t >= SHOT_KEEP_MS;
+  }
+  if (session) return false;
+  return now - Number(dirStat?.mtimeMs || now) >= SHOT_KEEP_MS;
+}
+
+function purgeExpiredShots() {
+  const root = config.shotsDir;
+  if (!fs.existsSync(root)) return { removed: 0 };
+  const now = Date.now();
+  let removed = 0;
+  for (const name of fs.readdirSync(root)) {
+    const dir = path.join(root, name);
+    let stat;
+    try {
+      stat = fs.statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    const session = db.getLiveSession(name);
+    if (!isShotFolderExpired(session, stat, now)) continue;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed += 1;
+    } catch (err) {
+      console.error("[shot cleanup]", name, err.message);
+    }
+  }
+  if (removed) console.log(`[shot cleanup] removed ${removed} session folder(s)`);
+  return { removed };
+}
+
 async function captureProductScreen({ sessionId, seller, productName = "F2" }) {
   if (!canGrabDesktop()) {
     throw new Error("클라우드 서버에서는 판매자 PC 화면을 찍을 수 없습니다. 상품 등록은 그대로 할 수 있습니다.");
@@ -114,4 +189,13 @@ async function captureProductScreen({ sessionId, seller, productName = "F2" }) {
   return fileName;
 }
 
-module.exports = { canGrabDesktop, captureOrderScreen, captureProductScreen, listShotFiles };
+module.exports = {
+  canGrabDesktop,
+  captureOrderScreen,
+  captureProductScreen,
+  decodeImage,
+  listShotFiles,
+  purgeExpiredShots,
+  saveUploadedOrderShot,
+  saveUploadedProductShot
+};

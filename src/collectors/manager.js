@@ -3,7 +3,13 @@ const db = require("../db");
 const { OrderEngine } = require("../engine/OrderEngine");
 const { composeRegistrationFields } = require("../engine/parse");
 const { writeChatExcel, writeExcel } = require("../export/excel");
-const { canGrabDesktop, captureOrderScreen, captureProductScreen } = require("../export/screenshot");
+const {
+  canGrabDesktop,
+  captureProductScreen,
+  decodeImage,
+  saveUploadedOrderShot,
+  saveUploadedProductShot
+} = require("../export/screenshot");
 const { renderInvoices } = require("../export/images");
 const { sendSessionMail } = require("../export/mail");
 const { excelFileName } = require("../export/fileName");
@@ -55,18 +61,6 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
     sessionId,
     onEvent: (type, payload) => {
       broadcast(sessionId, type, withSessionMeta(session, payload));
-      if (type === "order" && payload.captureScreen && session.screenCapture) {
-        captureOrderScreen({
-          engine,
-          seller: { id: user.id, username: user.username, name: user.name },
-          onShot: (shot) => broadcast(sessionId, "order-shot", withSessionMeta(session, shot)),
-          onFail: (message) => {
-            if (session.shotErrorSent) return;
-            session.shotErrorSent = true;
-            broadcast(sessionId, "shot-status", withSessionMeta(session, { ok: false, error: message }));
-          }
-        }, payload);
-      }
     }
   });
 
@@ -179,28 +173,36 @@ async function finishSessionFiles(session) {
   try {
     const { files: invoices } = await renderInvoices(session.id, invoiceOrdersFromEngine(session));
     for (const filePath of invoices || []) {
+      const filename = path.basename(filePath);
+      files.push({ filename, path: filePath });
       archiveSellerFile({
         seller,
         session,
         kind: "invoices",
         sourcePath: filePath,
-        filename: path.basename(filePath),
+        filename,
         source: "stop"
       });
     }
   } catch (err) {
     console.error("[stop invoices]", err.message);
   }
+  let mail = { ok: false, skipped: true };
   try {
-    await sendSessionMail({
-      seller: db.getUserById(session.userId),
+    mail = await sendSessionMail({
+      seller,
       platform: session.platform,
       channelId: session.channelId,
       files
     });
   } catch (err) {
     console.error("[stop mail]", err.message);
+    mail = { ok: false, error: err.message };
   }
+  return {
+    files: files.map((file) => file.filename),
+    mail
+  };
 }
 
 async function stopSession(sessionId) {
@@ -210,18 +212,57 @@ async function stopSession(sessionId) {
   try {
     if (session.stop) await session.stop();
   } catch {}
-  await finishSessionFiles(session);
+  const wrap = await finishSessionFiles(session);
   db.updateLiveSession(sessionId, {
     status: "stopped",
     stoppedAt: new Date().toISOString()
   });
   sessions.delete(sessionId);
-  return { id: sessionId, status: "stopped" };
+  return { id: sessionId, status: "stopped", ...wrap };
 }
 
-async function capturePendingProductShot(session, productName = "F2") {
+function saveClientOrderShot(session, payload, image) {
+  if (!session.screenCapture) {
+    throw new Error("화면캡처가 꺼져 있습니다.");
+  }
+  const buffer = decodeImage(image);
+  const seller = db.getUserById(session.userId);
+  const fileName = saveUploadedOrderShot({
+    engine: session.engine,
+    seller,
+    payload,
+    buffer
+  });
+  return withSessionMeta(session, {
+    uid: payload.uid,
+    product: payload.product,
+    option: payload.option,
+    message: payload.message,
+    nickname: payload.nickname,
+    shotFile: fileName
+  });
+}
+
+function saveClientProductShot(session, productName = "F2", image) {
+  if (!session.screenCapture) {
+    return { ok: false, message: "화면캡처가 꺼져 있습니다. 화면캡처를 켠 뒤 F2를 누르세요." };
+  }
+  const buffer = decodeImage(image);
+  const seller = db.getUserById(session.userId);
+  const shotFile = saveUploadedProductShot({
+    sessionId: session.id,
+    seller,
+    productName,
+    buffer
+  });
+  session.pendingShotFile = shotFile;
+  return { ok: true, shotFile };
+}
+
+async function capturePendingProductShot(session, productName = "F2", image) {
+  if (image) return saveClientProductShot(session, productName, image);
   if (!canGrabDesktop()) {
-    return { ok: false, message: "웹 서버에서는 판매자 PC 화면을 찍을 수 없습니다. 상품 등록은 그대로 하세요." };
+    return { ok: false, message: "화면캡처를 켠 뒤 화면 공유를 허용하고 F2를 누르세요. 웹 서버는 판매자 PC를 직접 찍을 수 없습니다." };
   }
   if (!session.screenCapture) {
     return { ok: false, message: "화면캡처가 꺼져 있습니다. 화면캡처를 켠 뒤 F2를 누르세요." };
@@ -236,7 +277,7 @@ async function capturePendingProductShot(session, productName = "F2") {
   return { ok: true, shotFile };
 }
 
-async function registerProduct(session, input) {
+async function registerProduct(session, input, image) {
   const payload = typeof input === "string"
     ? String(input || "").trim()
     : composeRegistrationFields({
@@ -246,16 +287,25 @@ async function registerProduct(session, input) {
   if (!payload) return { ok: true, skipped: true };
   let shotPath = session.pendingShotFile || "";
   session.pendingShotFile = "";
+  const productName = typeof input === "string"
+    ? "F2"
+    : (input.name || input.number || session.engine.qtyMode.product || "F2");
+  if (!shotPath && image) {
+    try {
+      const saved = saveClientProductShot(session, productName, image);
+      shotPath = saved.shotFile || "";
+      session.pendingShotFile = "";
+    } catch (err) {
+      console.error("[product shot upload]", err.message);
+    }
+  }
   if (!shotPath && session.screenCapture && canGrabDesktop()) {
     try {
       const seller = db.getUserById(session.userId);
-      const name = typeof input === "string"
-        ? "F2"
-        : (input.name || input.number || session.engine.qtyMode.product || "F2");
       shotPath = await captureProductScreen({
         sessionId: session.id,
         seller,
-        productName: name
+        productName
       });
     } catch (err) {
       console.error("[product shot]", err.message);
@@ -334,6 +384,8 @@ module.exports = {
   stopUserSessions,
   registerProduct,
   capturePendingProductShot,
+  saveClientOrderShot,
+  saveClientProductShot,
   removeProduct,
   resetProducts,
   clearOrders,

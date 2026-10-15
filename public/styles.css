@@ -159,6 +159,7 @@ main { padding: 28px 32px 40px; }
   font-size: 13px;
 }
 .product-chip.current { border-color: rgba(232, 195, 122, 0.45); color: #f3d19c; }
+.product-chip.has-shot { cursor: pointer; }
 .product-chip button {
   background: transparent;
   color: var(--danger);
@@ -188,6 +189,9 @@ main { padding: 28px 32px 40px; }
   font-size: 12px;
 }
 .desk-grid, .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (min-width: 1400px) {
+  .desk-grid { grid-template-columns: 1fr 1fr 1fr; }
+}
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -204,6 +208,7 @@ main { padding: 28px 32px 40px; }
   font-size: 14px;
 }
 .chat-row b, .order-row b { color: var(--mint); margin-right: 8px; }
+.output-row { outline: 1px solid rgba(126, 224, 198, 0.2); }
 .platform-tag {
   display: inline-block;
   margin-right: 8px;

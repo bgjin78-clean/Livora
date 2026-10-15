@@ -84,7 +84,7 @@
           <button id="labelBtn" class="ghost-btn" type="button">라벨</button>
         </div>
         <p id="channelIdsHint" class="register-hint">승인된 채널을 불러오는 중</p>
-        <p id="shotHint" class="register-hint">주문이 들어오면 Livora가 켜진 이 컴퓨터 화면 전체를 저장합니다. 상품 등록 전 F2 또는 F2 캡처로 확인용 사진을 찍을 수 있습니다.</p>
+        <p id="shotHint" class="register-hint">화면캡처를 켜면 화면 공유 창이 뜹니다. 전체 화면 또는 라이브 창을 고르세요. 상품을 등록하거나 주문이 들어오면 그 화면을 저장합니다. 방송이 끝나도 24시간은 다시 볼 수 있고, 그 다음에 서버에서 지웁니다.</p>
         <p id="labelHint" class="register-hint">라벨을 켜면 주문이 들어올 때 50×40mm 인쇄 창이 뜹니다. TSC DA220을 고르고 용지 크기를 맞추세요. 놓친 라벨은 주문 옆의 라벨 버튼으로 다시 찍을 수 있습니다.</p>
         <div class="register-row">
           <input id="productName" placeholder="상품명" />
@@ -109,6 +109,11 @@
           <article class="panel">
             <h3>접수된 주문</h3>
             <div id="liveOrders" class="feed"></div>
+          </article>
+          <article class="panel">
+            <h3>실시간 출력</h3>
+            <p class="register-hint">주문이 들어오면 수량만큼 한 줄씩 나갑니다. 예전 라프 출력과 같습니다.</p>
+            <div id="outputList" class="feed"></div>
           </article>
         </div>
       </section>
@@ -146,7 +151,7 @@
       </section>
 
       <section id="filesPage" class="page hidden">
-        <p class="lede small">주문 엑셀·정산서·채팅 엑셀은 지금 방송, 또는 다음 수집 전까지 직전 방송을 받습니다. 받으면 관리자 보관함에도 같은 파일이 저장됩니다.</p>
+        <p class="lede small">주문 엑셀·정산서·채팅 엑셀은 지금 방송, 또는 다음 수집 전까지 직전 방송을 받습니다. 받으면 관리자 보관함에도 같은 파일이 저장됩니다. 판매자 메일이 있고 서버 메일 설정이 되어 있으면 종료 때 같은 파일을 메일로도 보냅니다. 화면 캡처는 방송 종료 후 24시간 동안 두고, 그 다음에 서버에서 지웁니다.</p>
         <p id="filesHint" class="register-hint">받을 방송을 확인하는 중</p>
         <div class="control-row">
           <button id="excelBtn" class="gold-btn" type="button">주문 엑셀</button>
@@ -215,8 +220,9 @@
               <option value="tiktok">TikTok</option>
               <option value="youtube">YouTube</option>
             </select>
-            <input id="channelId" placeholder="틱톡 아이디 또는 유튜브 라이브 주소" />
+            <input id="channelId" placeholder="틱톡 아이디 또는 유튜브 아이디·닉네임" />
             <input id="channelLabel" placeholder="화면에 보일 이름" />
+            <p class="register-hint">유튜브는 라이브 주소 대신 채널 아이디(UC...)나 닉네임으로 승인합니다.</p>
             <button id="addChannelBtn" class="mint-btn" type="button">승인 추가</button>
             <div id="channelList" class="stack-list"></div>
           </article>

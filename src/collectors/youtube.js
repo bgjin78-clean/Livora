@@ -1,7 +1,7 @@
 const path = require("path");
 const axios = require("axios");
 const config = require("../config");
-const { normalizeText } = require("../engine/parse");
+
 
 let grpc = null;
 let liveChatStreamClient = null;
@@ -56,26 +56,76 @@ function isFatalGrpc(err) {
   ].includes(err.code);
 }
 
-async function getVideoId(input) {
-  const text = normalizeText(input);
-  let m = text.match(/[?&]v=([^&]+)/);
-  if (m) return m[1];
-  m = text.match(/youtu\.be\/([^?&/]+)/);
-  if (m) return m[1];
-  m = text.match(/youtube\.com\/live\/([^?&/]+)/);
-  if (m) return m[1];
-  if (!config.youtubeApiKey) throw new Error("YOUTUBE_API_KEY가 없습니다.");
+function isYouTubeAddress(value) {
+  const text = String(value || "").trim();
+  return /https?:\/\//i.test(text) || /youtu\.be|youtube\.com/i.test(text) || /[?&]v=/.test(text);
+}
 
-  const url =
-    "https://www.googleapis.com/youtube/v3/search" +
-    `?part=snippet&type=video&eventType=live&q=${encodeURIComponent(text)}` +
-    `&key=${config.youtubeApiKey}`;
+function normalizeYouTubeChannel(value) {
+  return String(value || "").trim().replace(/^@+/, "");
+}
+
+function compactName(value) {
+  return String(value || "").replace(/\s+/g, "").toLowerCase();
+}
+
+async function youtubeGet(url) {
   try {
     const res = await axios.get(url);
-    return res.data.items?.[0]?.id?.videoId || null;
+    return res.data;
   } catch (err) {
     throw new Error(youtubeApiError(err));
   }
+}
+
+async function optionalChannelId(params) {
+  const query = new URLSearchParams({ part: "id", key: config.youtubeApiKey, ...params });
+  try {
+    const res = await axios.get(`https://www.googleapis.com/youtube/v3/channels?${query}`);
+    return res.data.items?.[0]?.id || "";
+  } catch (err) {
+    if (err.response?.status === 400 || err.response?.status === 404) return "";
+    throw new Error(youtubeApiError(err));
+  }
+}
+
+async function findChannelId(input) {
+  if (isYouTubeAddress(input)) {
+    throw new Error("유튜브는 주소로 승인할 수 없습니다. 채널 아이디(UC...)나 닉네임을 넣으세요.");
+  }
+  const name = normalizeYouTubeChannel(input);
+  if (!name) throw new Error("유튜브 채널 아이디나 닉네임을 입력하세요.");
+  if (/^UC[\w-]{22}$/.test(name)) return name;
+
+  const byHandle = await optionalChannelId({ forHandle: name });
+  if (byHandle) return byHandle;
+  const byUser = await optionalChannelId({ forUsername: name });
+  if (byUser) return byUser;
+
+  const found = await youtubeGet(
+    "https://www.googleapis.com/youtube/v3/search" +
+    `?part=snippet&type=channel&maxResults=5&q=${encodeURIComponent(name)}&key=${config.youtubeApiKey}`
+  );
+  const items = found.items || [];
+  const wanted = compactName(name);
+  const exact = items.find((item) => compactName(item.snippet?.channelTitle || item.snippet?.title) === wanted);
+  const picked = exact || (items.length === 1 ? items[0] : null);
+  const channelId = picked?.id?.channelId || picked?.snippet?.channelId || "";
+  if (!channelId) {
+    throw new Error("같은 닉네임의 유튜브 채널을 찾지 못했습니다. 채널 아이디(UC...)를 넣어 보세요.");
+  }
+  return channelId;
+}
+
+async function getVideoId(input) {
+  if (!config.youtubeApiKey) throw new Error("YOUTUBE_API_KEY가 없습니다.");
+  const channelId = await findChannelId(input);
+  const found = await youtubeGet(
+    "https://www.googleapis.com/youtube/v3/search" +
+    `?part=snippet&type=video&eventType=live&maxResults=1&channelId=${encodeURIComponent(channelId)}` +
+    `&key=${config.youtubeApiKey}`
+  );
+  return found.items?.[0]?.id?.videoId || null;
 }
 
 async function getLiveChatId(videoId) {
@@ -216,7 +266,7 @@ async function startYouTube({ input, onChat, onStatus }) {
 
   const videoId = await getVideoId(input);
   if (!videoId) {
-    throw new Error("진행 중인 유튜브 라이브를 찾지 못했습니다. 라이브 주소(youtube.com/watch?v=...)를 채널에 넣어 보세요.");
+    throw new Error("진행 중인 유튜브 라이브를 찾지 못했습니다. 채널 아이디나 닉네임이 맞는지, 지금 라이브 중인지 확인하세요.");
   }
   const chatId = await getLiveChatId(videoId);
   if (!chatId) throw new Error("유튜브 라이브 채팅에 연결하지 못했습니다.");
@@ -259,4 +309,4 @@ async function startYouTube({ input, onChat, onStatus }) {
   };
 }
 
-module.exports = { startYouTube };
+module.exports = { startYouTube, isYouTubeAddress, normalizeYouTubeChannel };

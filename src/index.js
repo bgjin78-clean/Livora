@@ -6,12 +6,25 @@ const config = require("./config");
 const db = require("./db");
 const { createRouter } = require("./routes");
 const { attachRealtime, broadcastToUser } = require("./realtime");
+const { purgeExpiredShots } = require("./export/screenshot");
 
 db.open();
 
+function startShotCleanup() {
+  const run = () => {
+    try {
+      purgeExpiredShots();
+    } catch (err) {
+      console.error("[shot cleanup]", err.message);
+    }
+  };
+  run();
+  setInterval(run, 60 * 60 * 1000);
+}
+
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "4mb" }));
 app.use(cookieParser());
 app.get("/health", (_req, res) => {
   res.json({ ok: true, name: "livora" });
@@ -28,5 +41,6 @@ const server = http.createServer(app);
 attachRealtime(server);
 
 server.listen(config.port, config.host, () => {
+  startShotCleanup();
   console.log(`Livora  http://${config.host}:${config.port}`);
 });

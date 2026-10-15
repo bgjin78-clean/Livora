@@ -7,6 +7,8 @@ const state = {
   orders: [],
   products: [],
   reviews: [],
+  outputs: [],
+  mailReady: false,
   guessOnly: false,
   editingUserId: null,
   adminUsers: [],
@@ -170,6 +172,32 @@ function renderReviews() {
     : `<div class="order-row">검수대기 주문이 없습니다.</div>`;
 }
 
+function renderOutputs() {
+  const el = $("outputList");
+  if (!el) return;
+  el.innerHTML = (state.outputs || []).length
+    ? state.outputs.slice(0, 200).map((row) => `
+        <div class="order-row output-row">
+          <b>${escapeAttr(row.nick || "")}</b>
+          ${escapeAttr(row.product || "")} ${escapeAttr(row.option || "")}
+        </div>
+      `).join("")
+    : `<div class="order-row">주문이 들어오면 수량만큼 여기에 출력됩니다.</div>`;
+}
+
+function appendOutputLines(payload) {
+  const count = Number(payload.printQty || 0);
+  if (!count) return;
+  const option = [payload.option, payload.color, payload.size].filter(Boolean).filter((part, idx, all) => all.indexOf(part) === idx).join(" ");
+  const lines = Array.from({ length: count }, () => ({
+    nick: payload.nickname || payload.nick || "",
+    product: payload.product || "",
+    option
+  }));
+  state.outputs = lines.concat(state.outputs).slice(0, 200);
+  renderOutputs();
+}
+
 function matchSourceLabel(source) {
   return {
     "qty-mode": "이거모드",
@@ -209,6 +237,164 @@ function setShotButton() {
   const on = canUseShots() && state.screenCapture !== false;
   $("shotBtn").textContent = on ? "화면캡처 ON" : "화면캡처";
   $("shotBtn").classList.toggle("on", on);
+}
+
+const SHOT_HINT = "화면캡처를 켜면 화면 공유 창이 뜹니다. 전체 화면 또는 라이브 창을 고르세요. 주문이 들어오면 그 화면을 저장합니다. 방송이 끝나도 24시간은 다시 볼 수 있고, 그 다음에 서버에서 지웁니다.";
+let screenStream = null;
+let screenVideo = null;
+let shotUploadQueue = Promise.resolve();
+
+function setShotHint(text) {
+  if ($("shotHint")) $("shotHint").textContent = text || SHOT_HINT;
+}
+
+function isScreenShareLive() {
+  return Boolean(screenStream && screenStream.getVideoTracks().some((track) => track.readyState === "live"));
+}
+
+function stopScreenShare() {
+  screenStream?.getTracks().forEach((track) => track.stop());
+  screenStream = null;
+  if (screenVideo) screenVideo.srcObject = null;
+}
+
+function onShareEnded() {
+  stopScreenShare();
+  if (state.screenCapture === false) return;
+  state.screenCapture = false;
+  localStorage.setItem("livoraScreenCapture", "0");
+  setShotButton();
+  setShotHint("화면 공유가 끊어졌습니다. 화면캡처를 다시 켜 주세요.");
+  if (state.session) {
+    api("/api/sessions/screen-capture", { method: "POST", body: platformBody({ enabled: false }) }).catch(() => {});
+  }
+}
+
+async function ensureScreenShare() {
+  if (isScreenShareLive()) return true;
+  if (!navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error("이 브라우저는 화면 캡처를 지원하지 않습니다. Chrome에서 열어 주세요.");
+  }
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 5 },
+      audio: false
+    });
+    const track = screenStream.getVideoTracks()[0];
+    if (track) track.addEventListener("ended", onShareEnded);
+    if (!screenVideo) {
+      screenVideo = document.createElement("video");
+      screenVideo.muted = true;
+      screenVideo.playsInline = true;
+      screenVideo.setAttribute("playsinline", "");
+      screenVideo.style.cssText = "position:fixed;left:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
+      document.body.appendChild(screenVideo);
+    }
+    screenVideo.srcObject = screenStream;
+    await screenVideo.play();
+    if (!screenVideo.videoWidth) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("화면 공유가 아직 준비되지 않았습니다.")), 4000);
+        screenVideo.onloadedmetadata = () => {
+          clearTimeout(timer);
+          resolve();
+        };
+      });
+    }
+    setShotHint("화면 공유 중입니다. 주문이 들어오면 이 화면을 저장합니다.");
+    return true;
+  } catch (err) {
+    stopScreenShare();
+    if (err?.name === "NotAllowedError" || err?.name === "NotFoundError") {
+      throw new Error("화면 공유를 허용해야 주문 때 캡처됩니다. 전체 화면 또는 라이브 창을 고르세요.");
+    }
+    throw err;
+  }
+}
+
+async function grabScreenBlob() {
+  if (!isScreenShareLive()) {
+    throw new Error("화면 공유가 꺼져 있습니다. 화면캡처를 다시 켜 주세요.");
+  }
+  const canvas = document.createElement("canvas");
+  let width = 0;
+  let height = 0;
+  let draw;
+  const track = screenStream.getVideoTracks()[0];
+  if (typeof ImageCapture !== "undefined" && track) {
+    try {
+      const bitmap = await new ImageCapture(track).grabFrame();
+      width = bitmap.width;
+      height = bitmap.height;
+      draw = (ctx, dw, dh) => ctx.drawImage(bitmap, 0, 0, dw, dh);
+    } catch {}
+  }
+  if (!draw) {
+    if (!screenVideo?.videoWidth) throw new Error("화면 공유가 아직 준비되지 않았습니다.");
+    width = screenVideo.videoWidth;
+    height = screenVideo.videoHeight;
+    draw = (ctx, dw, dh) => ctx.drawImage(screenVideo, 0, 0, dw, dh);
+  }
+  const scale = Math.min(1, 1600 / width);
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  draw(canvas.getContext("2d"), canvas.width, canvas.height);
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("캡처에 실패했습니다."))), "image/jpeg", 0.72);
+  });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("캡처 변환에 실패했습니다."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function captureScreenDataUrl() {
+  const blob = await grabScreenBlob();
+  return blobToDataUrl(blob);
+}
+
+async function uploadOrderShot(order) {
+  if (!canUseShots() || state.screenCapture === false) return;
+  if (!isScreenShareLive()) {
+    setShotHint("화면 공유가 꺼져 있어 주문 화면을 찍지 못했습니다. 화면캡처를 다시 켜 주세요.");
+    return;
+  }
+  const image = await captureScreenDataUrl();
+  const data = await api("/api/sessions/order-shot", {
+    method: "POST",
+    body: platformBody({
+      sessionId: order.sessionId,
+      image,
+      uid: order.uid,
+      nickname: order.nick || order.nickname,
+      product: order.product,
+      option: order.option_name || order.option,
+      message: order.msg || order.message
+    })
+  });
+  if (!data?.shotFile) return;
+  const idx = state.orders.findIndex((row) =>
+    row.uid === order.uid &&
+    row.product === order.product &&
+    (row.option_name || row.option || "") === (order.option_name || order.option || "") &&
+    (!order.sessionId || !row.sessionId || row.sessionId === order.sessionId)
+  );
+  if (idx >= 0) {
+    state.orders[idx].shotFile = data.shotFile;
+    state.orders[idx].shot_path = data.shotFile;
+    renderOrders();
+  }
+}
+
+function enqueueOrderShot(order) {
+  shotUploadQueue = shotUploadQueue.then(() => uploadOrderShot(order)).catch((err) => {
+    setShotHint(err.message || "주문 화면 캡처에 실패했습니다.");
+  });
 }
 
 function optionText(order) {
@@ -384,15 +570,14 @@ function updateFilesHint() {
     hint.textContent = "아직 받을 방송이 없습니다. 수집을 한 번 하면 종료 후에도 받을 수 있습니다.";
     return;
   }
-  hint.textContent = `직전 방송: ${platformLabel(session.platform)} ${session.channelId || session.channel_id || ""} · 다음 수집 전까지 이 방송을 받습니다.`;
+  const mailNote = state.mailReady ? " 종료하면 등록한 메일로도 보냅니다." : "";
+  hint.textContent = `직전 방송: ${platformLabel(session.platform)} ${session.channelId || session.channel_id || ""} · 다음 수집 전까지 이 방송을 받습니다.${mailNote}`;
 }
 
 function setLiveBadge() {
   const lives = liveSessions();
   const live = lives.length > 0;
-  $("liveBadge").textContent = live
-    ? lives.map((row) => `${platformLabel(row.platform)} ${row.channelId || row.channel_id || ""}`).join(" · ")
-    : "대기";
+  $("liveBadge").textContent = live ? "수집중" : "대기";
   $("liveBadge").classList.toggle("live", live);
   updateFilesHint();
 }
@@ -482,6 +667,7 @@ function connectWs() {
         sessionId: msg.payload.sessionId
       };
       if (state.labelPrint) enqueueLabel(msg.payload, msg.payload.printQty ?? incoming.qty);
+      appendOutputLines(msg.payload);
       const idx = state.orders.findIndex((o) =>
         o.uid === incoming.uid &&
         o.product === incoming.product &&
@@ -497,10 +683,18 @@ function connectWs() {
         state.orders.unshift(incoming);
       }
       renderOrders();
+      if (canUseShots() && state.screenCapture !== false && msg.payload.captureScreen !== false) {
+        enqueueOrderShot(incoming);
+      }
     }
     if (msg.type === "order-shot") {
       const p = msg.payload || {};
-      const idx = state.orders.findIndex((o) => o.uid === p.uid && o.product === p.product && (o.option_name || o.option || "") === (p.option || ""));
+      const idx = state.orders.findIndex((o) =>
+        o.uid === p.uid &&
+        o.product === p.product &&
+        (o.option_name || o.option || "") === (p.option || "") &&
+        (!p.sessionId || !o.sessionId || o.sessionId === p.sessionId)
+      );
       if (idx >= 0) {
         state.orders[idx].shotFile = p.shotFile;
         state.orders[idx].shot_path = p.shotFile;
@@ -508,7 +702,7 @@ function connectWs() {
       }
     }
     if (msg.type === "shot-status" && msg.payload && !msg.payload.ok) {
-      $("shotHint").textContent = msg.payload.error || "화면 캡처에 실패했습니다. Livora가 켜진 이 컴퓨터 화면만 찍을 수 있습니다.";
+      setShotHint(msg.payload.error || "화면 캡처에 실패했습니다. 화면캡처를 다시 켜 주세요.");
     }
     if (msg.type === "status") {
       if (msg.payload.platform) {
@@ -516,10 +710,6 @@ function connectWs() {
         if (current) upsertSession({ ...current, status: msg.payload.status === "error" ? "running" : current.status, error: msg.payload.error || "" });
       }
       setLiveBadge();
-      if (msg.payload.status === "error") {
-        $("liveBadge").textContent = String(msg.payload.error || "오류").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-        $("liveBadge").classList.add("live");
-      }
     }
     if (msg.type === "product") {
       if (msg.payload.platform && msg.payload.platform !== selectedPlatform()) return;
@@ -541,6 +731,7 @@ function connectWs() {
 async function bootApp() {
   const data = await api("/api/me");
   state.user = data.user;
+  state.mailReady = Boolean(data.mailReady);
   state.channels = data.channels || [];
   state.sessions = data.sessions || (data.session ? [data.session] : []);
   state.session = data.session || state.sessions[0] || null;
@@ -557,6 +748,9 @@ async function bootApp() {
   setLiveBadge();
   setShotButton();
   setLabelButton();
+  if (canUseShots() && state.screenCapture !== false && !isScreenShareLive()) {
+    setShotHint("화면캡처가 켜져 있습니다. 수집 시작을 누르면 공유할 화면을 고릅니다. 이미 수집 중이면 화면캡처를 한 번 껐다 켜 주세요.");
+  }
   if (liveSessions().length || state.session) {
     const cur = await api(`/api/sessions/current${selectedPlatform() ? `?platform=${encodeURIComponent(selectedPlatform())}` : ""}`);
     state.sessions = cur.sessions || state.sessions;
@@ -571,6 +765,7 @@ async function bootApp() {
     renderChats();
     renderOrders();
     renderReviews();
+    renderOutputs();
     const snap = cur.session?.snapshot;
     state.products = snap?.products || cur.products || [];
     if (snap?.qtyMode?.product) setCurrentProduct(snap.products?.find((p) => (p.product || p.number) === snap.qtyMode.product) || snap.products?.[0], snap.qtyMode);
@@ -839,6 +1034,18 @@ $("startBtn").onclick = async () => {
   const channelId = $("channelSelect").value;
   if (!platform || !channelId) return alert("승인된 채널이 없습니다.");
   try {
+    if (canUseShots() && state.screenCapture !== false) {
+      try {
+        await ensureScreenShare();
+      } catch (err) {
+        state.screenCapture = false;
+        localStorage.setItem("livoraScreenCapture", "0");
+        setShotButton();
+        setShotHint(err.message || "화면 공유를 허용해야 주문 때 캡처됩니다. 수집은 이어서 시작합니다.");
+      }
+    }
+    $("liveBadge").textContent = "수집중";
+    $("liveBadge").classList.add("live");
     const data = await api("/api/sessions/start", {
       method: "POST",
       body: { platform, channelId, screenCapture: canUseShots() && state.screenCapture !== false }
@@ -851,25 +1058,46 @@ $("startBtn").onclick = async () => {
     state.chats = state.chats.filter((c) => c.platform && c.platform !== platform);
     state.orders = state.orders.filter((o) => o.platform && o.platform !== platform);
     state.reviews = state.reviews.filter((r) => r.platform && r.platform !== platform);
+    state.outputs = [];
     state.products = [];
     applyProductState([], null);
     renderChats();
     renderOrders();
     renderReviews();
+    renderOutputs();
     setLiveBadge();
   } catch (err) {
+    setLiveBadge();
     alert(err.message);
   }
 };
 
 $("stopBtn").onclick = async () => {
   const platform = selectedPlatform();
-  const data = await api("/api/sessions/stop", { method: "POST", body: { platform } });
+  const previousSessions = state.sessions.slice();
+  state.sessions = state.sessions.filter((row) => row.platform !== platform);
+  setLiveBadge();
+  let data;
+  try {
+    data = await api("/api/sessions/stop", { method: "POST", body: { platform } });
+  } catch (err) {
+    state.sessions = previousSessions;
+    setLiveBadge();
+    alert(err.message);
+    return;
+  }
   setLastSession(data.lastSession || data.session || state.session);
   state.sessions = data.sessions || [];
   state.session = state.sessions.find((row) => row.platform === platform) || data.session || state.sessions[0] || null;
   setLiveBadge();
-  $("filesHint").textContent = `${platformLabel(platform)} 종료 저장이 끝났습니다. 엑셀·정산서·채팅 파일을 받으세요.`;
+  const mail = data.mail || {};
+  let mailText = "";
+  if (mail.ok) mailText = ` 메일 ${mail.to || ""}로 엑셀·정산서를 보냈습니다.`;
+  else if (mail.error) mailText = ` 메일은 보내지 못했습니다. ${mail.error}`;
+  else if (mail.reason === "no-target") mailText = " 받을 메일이 없어 파일만 저장했습니다. 관리 화면에서 메일을 넣어 주세요.";
+  else if (mail.reason === "smtp") mailText = " 메일 서버 설정이 없어 파일만 저장했습니다.";
+  $("filesHint").textContent = `${platformLabel(platform)} 종료 저장이 끝났습니다. 엑셀·정산서·채팅 파일을 받으세요.${mailText}`;
+  if (mail.ok) alert(`${platformLabel(platform)} 종료. 메일을 보냈습니다.`);
 };
 
 function productKey(p) {
@@ -921,9 +1149,10 @@ function renderProductHistory(qtyMode) {
       p.colors?.length ? p.colors.join("/") : "",
       Number(p.price) ? `${Number(p.price).toLocaleString("ko-KR")}원` : ""
     ].filter(Boolean).join(" ");
+    const shot = p.shotFile || p.shot_path || "";
     return `
-      <span class="product-chip ${p.current ? "current" : ""}" data-key="${escapeAttr(p.key)}">
-        ${escapeAttr(p.name)}${extra ? ` ${escapeAttr(extra)}` : ""}${p.current ? " · 현재" : ""}
+      <span class="product-chip ${p.current ? "current" : ""} ${shot ? "has-shot" : ""}" data-key="${escapeAttr(p.key)}" data-shot="${escapeAttr(shot)}" title="${shot ? "클릭하면 이 상품 캡처를 엽니다" : ""}">
+        ${escapeAttr(p.name)}${extra ? ` ${escapeAttr(extra)}` : ""}${p.current ? " · 현재" : ""}${shot ? " · 캡처" : ""}
         <button type="button" data-remove="${p.key}">삭제</button>
       </span>`;
   }).join("");
@@ -961,9 +1190,18 @@ $("registerBtn").onclick = async () => {
   const stock = $("productStock").value.trim();
   if (!name && !number && !size && !color && !qty && !price && !stock) return;
   try {
+    let image = "";
+    if (canUseShots() && state.screenCapture !== false) {
+      try {
+        if (!isScreenShareLive()) await ensureScreenShare();
+        image = await captureScreenDataUrl();
+      } catch (err) {
+        setShotHint(err.message || "상품 등록 화면을 찍지 못했습니다. 상품은 그대로 등록합니다.");
+      }
+    }
     const data = await api("/api/sessions/products", {
       method: "POST",
-      body: platformBody({ name, number, size, color, qty, price, stock })
+      body: platformBody({ name, number, size, color, qty, price, stock, image })
     });
     if (data.skipped) return;
     ["productName", "productNumber", "productSize", "productColor", "productQty", "productPrice", "productStock"].forEach((id) => {
@@ -972,6 +1210,8 @@ $("registerBtn").onclick = async () => {
     upsertProduct(data.registration);
     setCurrentProduct(data.registration, data.qtyMode);
     if (data.qtyMode?.enabled) $("qtyBtn").textContent = "이거모드 ON";
+    const shot = data.registration?.shotFile || "";
+    if (shot) setShotHint(`상품 등록 캡처 저장: ${shot}. 상품 이름을 누르면 열립니다.`);
   } catch (err) {
     const message = String(err.message || "").trim();
     alert(message === "요청 실패" || /failed to fetch/i.test(message)
@@ -987,8 +1227,18 @@ $("registerBtn").onclick = async () => {
 });
 
 $("productList").onclick = async (ev) => {
-  const key = ev.target?.dataset?.remove;
-  if (!key) return;
+  const removeKey = ev.target?.dataset?.remove;
+  if (!removeKey) {
+    const chip = ev.target.closest(".product-chip");
+    const shot = chip?.dataset?.shot;
+    if (shot && canUseShots()) {
+      const href = orderShotHref(shot);
+      if (href) window.open(href, "_blank", "noopener");
+      else alert("캡처 파일을 열 수 없습니다. 수집 화면에서 다시 열어 보세요.");
+    }
+    return;
+  }
+  const key = removeKey;
   const chip = ev.target.closest(".product-chip");
   const label = (chip?.textContent || "").replace("삭제", "").trim() || "이 상품";
   if (!confirm(`${label}\n등록에서 삭제할까요? 이미 접수된 주문은 그대로 둡니다.`)) return;
@@ -1025,6 +1275,20 @@ $("qtyBtn").onclick = async () => {
 $("shotBtn").onclick = async () => {
   if (!canUseShots()) return;
   const next = state.screenCapture === false;
+  if (next) {
+    try {
+      await ensureScreenShare();
+    } catch (err) {
+      state.screenCapture = false;
+      localStorage.setItem("livoraScreenCapture", "0");
+      setShotButton();
+      setShotHint(err.message || "화면 공유를 허용해야 주문 때 캡처됩니다.");
+      return;
+    }
+  } else {
+    stopScreenShare();
+    setShotHint();
+  }
   state.screenCapture = next;
   localStorage.setItem("livoraScreenCapture", next ? "1" : "0");
   setShotButton();
@@ -1032,6 +1296,7 @@ $("shotBtn").onclick = async () => {
   try {
     const data = await api("/api/sessions/screen-capture", { method: "POST", body: platformBody({ enabled: next }) });
     state.screenCapture = data.enabled !== false;
+    if (state.screenCapture === false) stopScreenShare();
     setShotButton();
   } catch (err) {
     alert(err.message);
@@ -1067,7 +1332,7 @@ async function loadShots() {
     const data = await api(`/api/sessions/${session.id}/shots`);
     $("fileList").innerHTML = (data.files || []).map((file) => `
       <a class="file-item" href="/api/sessions/${session.id}/shots/${encodeURIComponent(file)}" target="_blank">${file}</a>
-    `).join("") || "<div class='file-item'>저장된 화면 캡처가 없습니다. 화면캡처를 켠 뒤 주문이 들어오면 여기에 쌓입니다.</div>";
+    `).join("") || "<div class='file-item'>저장된 화면 캡처가 없습니다. 화면캡처를 켠 뒤 주문이 들어오면 여기에 쌓입니다. 방송 종료 후 24시간이 지나면 지워집니다.</div>";
   } catch (err) {
     alert(err.message);
   }
@@ -1134,8 +1399,10 @@ $("clearOrdersBtn").onclick = async () => {
     const platform = selectedPlatform();
     state.orders = state.orders.filter((o) => o.platform && o.platform !== platform);
     state.reviews = state.reviews.filter((r) => r.platform && r.platform !== platform);
+    state.outputs = [];
     renderOrders();
     renderReviews();
+    renderOutputs();
     $("summaryBox").textContent = "주문 목록을 지웠습니다.";
   } catch (err) {
     alert(err.message);
@@ -1145,11 +1412,15 @@ $("clearOrdersBtn").onclick = async () => {
 async function captureProductShot() {
   if (!canUseShots()) return;
   try {
+    if (state.screenCapture !== false && !isScreenShareLive()) {
+      await ensureScreenShare();
+    }
+    const image = isScreenShareLive() ? await captureScreenDataUrl() : "";
     const data = await api("/api/sessions/product-shot", {
       method: "POST",
-      body: platformBody({ name: $("productName").value.trim() || "F2" })
+      body: platformBody({ name: $("productName").value.trim() || "F2", image })
     });
-    $("shotHint").textContent = `상품 확인 캡처 저장: ${data.shotFile}. 다음 상품 등록에 이 사진이 붙습니다.`;
+    setShotHint(`상품 확인 캡처 저장: ${data.shotFile}. 다음 상품 등록에 이 사진이 붙습니다.`);
   } catch (err) {
     alert(err.message);
   }
@@ -1314,17 +1585,21 @@ $("userList").addEventListener("click", async (e) => {
 });
 
 $("addChannelBtn").onclick = async () => {
-  await api("/api/admin/channels", {
-    method: "POST",
-    body: {
-      userId: Number($("channelUser").value),
-      platform: $("channelPlatform").value,
-      channelId: $("channelId").value,
-      label: $("channelLabel").value
-    }
-  });
-  $("channelId").value = "";
-  loadAdmin();
+  try {
+    await api("/api/admin/channels", {
+      method: "POST",
+      body: {
+        userId: Number($("channelUser").value),
+        platform: $("channelPlatform").value,
+        channelId: $("channelId").value,
+        label: $("channelLabel").value
+      }
+    });
+    $("channelId").value = "";
+    loadAdmin();
+  } catch (err) {
+    alert(err.message);
+  }
 };
 
 $("sellerDataUser").onchange = () => {
