@@ -14,6 +14,7 @@ module.exports = {
   adminUsername: process.env.ADMIN_USERNAME || "admin",
   adminPassword: process.env.ADMIN_PASSWORD || "livora-admin",
   youtubeApiKey: process.env.YOUTUBE_API_KEY || "",
+  tiktokSignApiKey: process.env.SIGN_API_KEY || "",
   cookieSecure: process.env.COOKIE_SECURE === "true" || (isProd && process.env.COOKIE_SECURE !== "false"),
   smtpHost: process.env.SMTP_HOST || "smtp.gmail.com",
   smtpPort: Number(process.env.SMTP_PORT || 465),
