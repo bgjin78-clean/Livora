@@ -41,7 +41,7 @@ function productShotFileName({ seller, product, at } = {}) {
 }
 
 function excelFileName({ seller, kind, at } = {}) {
-  return `${localDateStamp(at)}_${sellerFileTag(seller)}_${kind || "orders"}.xlsx`;
+  return `${localDateTimeStamp(at)}_${sellerFileTag(seller)}_${kind || "orders"}.xlsx`;
 }
 
 module.exports = {

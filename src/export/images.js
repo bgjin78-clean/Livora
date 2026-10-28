@@ -88,98 +88,127 @@ async function renderChatShot({ sessionId, platform, channelId, productLabel, ch
   return filePath;
 }
 
+function invoiceOptionText(item) {
+  const parts = [item.option, item.option_name, item.color, item.size]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  return [...new Set(parts)].join(" ");
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const chars = [...String(text || "")];
+  const lines = [];
+  let line = "";
+  for (const ch of chars) {
+    const next = line + ch;
+    if (line && ctx.measureText(next).width > maxWidth) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+
+function money(value) {
+  return `${Number(value || 0).toLocaleString("ko-KR")}원`;
+}
+
 async function renderInvoices(sessionId, orders) {
   const grouped = {};
-  for (const o of orders) {
-    const nick = o.nickname || o.nick || "unknown";
+  for (const order of orders || []) {
+    const nick = String(order.nickname || order.nick || "").trim() || "구매자";
     if (!grouped[nick]) grouped[nick] = [];
-    grouped[nick].push(o);
+    grouped[nick].push(order);
   }
 
   const dir = path.join(config.invoicesDir, sessionId);
   ensureDir(dir);
   const files = [];
+  const width = 900;
+  const pad = 48;
 
   for (const nick of Object.keys(grouped)) {
     const items = grouped[nick];
-    const width = 1400;
-    const rowHeight = 56;
-    const headerHeight = 210;
-    const footerHeight = 100;
-    const tableHeaderHeight = 54;
-    const totalHeight = headerHeight + tableHeaderHeight + items.length * rowHeight + footerHeight;
-    const canvas = createCanvas(width, totalHeight);
+    const measure = createCanvas(width, 200).getContext("2d");
+    measure.font = krFont(28);
+    const rows = items.map((item) => {
+      const option = invoiceOptionText(item);
+      const title = option ? `${item.product || "상품"}  ${option}` : String(item.product || "상품");
+      const lines = wrapText(measure, title, 520);
+      const qty = Number(item.qty || 0);
+      const amount = Number(item.amount || qty * Number(item.price || 0));
+      return { lines, qty, amount, height: Math.max(72, lines.length * 36 + 28) };
+    });
+    const height = 280 + rows.reduce((sum, row) => sum + row.height, 0) + 180;
+    const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
-
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, width, totalHeight);
-    ctx.strokeStyle = "#d9d0ea";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(20, 20, width - 40, totalHeight - 40);
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = "#6f42c1";
+    ctx.fillRect(0, 0, width, 12);
 
     const dateText = `${new Date().getFullYear()}년 ${new Date().getMonth() + 1}월 ${new Date().getDate()}일`;
-    const total = items.reduce((sum, i) => sum + Number(i.amount || 0), 0);
-
     ctx.fillStyle = "#6f42c1";
-    ctx.font = krFont(42, "bold");
-    ctx.fillText(`${nick}님`, 60, 85);
-    ctx.font = krFont(32, "bold");
-    ctx.fillText(dateText, 60, 145);
+    ctx.font = krFont(26, "bold");
+    ctx.fillText("구매 정산서", pad, 64);
     ctx.fillStyle = "#222222";
-    ctx.font = krFont(28);
-    ctx.fillText("구매해 주셔서 감사합니다", 60, 195);
+    ctx.font = krFont(40, "bold");
+    ctx.fillText(`${nick} 님`, pad, 122);
+    ctx.fillStyle = "#666666";
+    ctx.font = krFont(22);
+    ctx.fillText(dateText, pad, 164);
+    ctx.fillText("구매해 주셔서 감사합니다.", pad, 200);
 
-    ctx.fillStyle = "#7d65b1";
-    ctx.font = krFont(24);
-    ctx.fillText("(기본배송비 3,500원 별도)", 1010, 70);
+    let y = 250;
+    ctx.fillStyle = "#f6f3fb";
+    ctx.fillRect(pad, y, width - pad * 2, 48);
+    ctx.fillStyle = "#555555";
+    ctx.font = krFont(20, "bold");
+    ctx.fillText("상품", pad + 16, y + 32);
+    ctx.fillText("수량", 600, y + 32);
+    ctx.textAlign = "right";
+    ctx.fillText("금액", width - pad - 16, y + 32);
+    ctx.textAlign = "left";
+    y += 48;
+
+    let total = 0;
+    for (const row of rows) {
+      ctx.strokeStyle = "#eee8f6";
+      ctx.beginPath();
+      ctx.moveTo(pad, y + row.height);
+      ctx.lineTo(width - pad, y + row.height);
+      ctx.stroke();
+      ctx.fillStyle = "#222222";
+      ctx.font = krFont(26);
+      row.lines.forEach((line, index) => ctx.fillText(line, pad + 16, y + 40 + index * 36));
+      ctx.font = krFont(26);
+      ctx.fillText(String(row.qty), 616, y + 40);
+      ctx.textAlign = "right";
+      ctx.fillText(money(row.amount), width - pad - 16, y + 40);
+      ctx.textAlign = "left";
+      total += row.amount;
+      y += row.height;
+    }
+
+    y += 28;
     ctx.fillStyle = "#222222";
     ctx.font = krFont(28, "bold");
-    ctx.fillText("합계", 1030, 125);
+    ctx.fillText("합계", pad + 16, y + 36);
     ctx.fillStyle = "#6f42c1";
-    ctx.font = krFont(54, "bold");
-    ctx.fillText(`₩${Number(total).toLocaleString("ko-KR")}`, 980, 190);
+    ctx.font = krFont(36, "bold");
+    ctx.textAlign = "right";
+    ctx.fillText(money(total), width - pad - 16, y + 38);
+    ctx.textAlign = "left";
+    ctx.fillStyle = "#777777";
+    ctx.font = krFont(20);
+    ctx.fillText("배송비는 별도입니다.", pad, y + 88);
+    ctx.fillText("감사합니다.", pad, y + 122);
 
-    const tableX = 40;
-    const tableY = 240;
-    const colNick = 180;
-    const colProduct = 650;
-    const colQty = 130;
-    const colPrice = 150;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(tableX, tableY, width - 80, tableHeaderHeight);
-    ctx.strokeStyle = "#d9d0ea";
-    ctx.strokeRect(tableX, tableY, width - 80, tableHeaderHeight);
-    ctx.fillStyle = "#222222";
-    ctx.font = krFont(24, "bold");
-    ctx.fillText("닉네임", tableX + 28, tableY + 35);
-    ctx.fillText("상품명", tableX + colNick + 140, tableY + 35);
-    ctx.fillText("수량", tableX + colNick + colProduct + 35, tableY + 35);
-    ctx.fillText("단가", tableX + colNick + colProduct + colQty + 35, tableY + 35);
-    ctx.fillText("금액", tableX + colNick + colProduct + colQty + colPrice + 35, tableY + 35);
-
-    items.forEach((item, idx) => {
-      const y = tableY + tableHeaderHeight + idx * rowHeight;
-      ctx.strokeStyle = "#e5e5e5";
-      ctx.beginPath();
-      ctx.moveTo(tableX, y);
-      ctx.lineTo(width - 40, y);
-      ctx.stroke();
-      const productText = item.option ? `${item.product} ${item.option}` : `${item.product}`;
-      ctx.fillStyle = "#222222";
-      ctx.font = krFont(24);
-      ctx.fillText(String(nick), tableX + 28, y + 37);
-      ctx.fillText(String(productText).slice(0, 32), tableX + colNick + 20, y + 37);
-      ctx.fillText(String(item.qty), tableX + colNick + colProduct + 45, y + 37);
-      ctx.fillText(Number(item.price || 0).toLocaleString("ko-KR"), tableX + colNick + colProduct + colQty + 20, y + 37);
-      ctx.fillText(Number(item.amount || 0).toLocaleString("ko-KR"), tableX + colNick + colProduct + colQty + colPrice + 20, y + 37);
-    });
-
-    ctx.fillStyle = "#222222";
-    ctx.font = krFont(28);
-    ctx.fillText("언제나 감사합니다 :)", width / 2 - 110, totalHeight - 45);
-
-    const safeNick = String(nick).replace(/[\\/:*?"<>|]/g, "_");
-    const filePath = path.join(dir, `${safeNick}.jpg`);
+    const safeNick = String(nick).replace(/[\\/:*?"<>|]/g, "_").slice(0, 40) || "구매자";
+    const filePath = path.join(dir, `정산서_${safeNick}.jpg`);
     fs.writeFileSync(filePath, canvas.toBuffer("image/jpeg", { quality: 0.92 }));
     files.push(filePath);
   }

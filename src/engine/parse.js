@@ -349,6 +349,7 @@ function leftoverAfterOrderWords(text) {
   compact = compact.replace(/\d+(?:개|장|박스|상자|세트|셋트|벌)?/g, "");
   compact = removePhrases(compact, Object.keys(QTY_WORDS));
   compact = removePhrases(compact, ["조금만", "조금", "빨리", "바로", "지금", "제발", "많이"]);
+  compact = compact.replace(/(?:이요|여요|요|용|여)+$/u, "");
   return compact.replace(/[0-9]/g, "");
 }
 
@@ -450,6 +451,8 @@ function extractFlexibleQty(text, def = 1) {
   m = String(text).match(/(\d+)\s*(개|장|세트|셋트|벌|박스|상자)?/);
   if (m) return parseInt(m[1], 10);
   if (QTY_WORDS[compact]) return QTY_WORDS[compact];
+  const wordQty = compact.match(/(한|하나|두|둘|세|셋|네|넷|다섯|여섯|일곱|여덟|아홉|열)(?:개|장|박스|상자|세트|셋트|벌)/u);
+  if (wordQty && QTY_WORDS[wordQty[1]]) return QTY_WORDS[wordQty[1]];
   const nums = String(text).match(/(\d+\.?|\.\d+)/g);
   if (nums?.length) return parseInt(String(nums[nums.length - 1]).replace(".", ""), 10);
   return def;
@@ -660,6 +663,92 @@ function isChangeIntent(msg) {
   return CHANGE_PHRASES.some((phrase) => compact.includes(phrase));
 }
 
+function hasMoreQty(compact) {
+  return /(?:한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(?:개|장|박스|상자|세트|셋트|벌)?\s*(?:만)?\s*더/u.test(compact)
+    || /더\s*(?:한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(?:개|장)?/u.test(compact)
+    || /(?:한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(?:개|장|박스|상자|세트|셋트|벌)?\s*추가/u.test(compact)
+    || /추가(?:로)?\s*(?:한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(?:개|장)?/u.test(compact);
+}
+
+function isQtyOnly(msg) {
+  if (!hasExplicitQty(msg) && !hasUnitQty(msg)) return false;
+  let compact = normalizeMatchText(msg);
+  compact = removePhrases(compact, [...FOLLOW_WORDS, ...ORDER_PHRASES, "아니요", "아뇨", "아니", "그냥", "정정", "말고"]);
+  compact = compact.replace(/(?:으로|로|이요|여요|요|용|여|개|장|박스|상자|세트|셋트|벌)/gu, "");
+  compact = compact.replace(/\d+/g, "");
+  compact = removePhrases(compact, Object.keys(QTY_WORDS));
+  return !compact;
+}
+
+function isLowerQtyCorrection(msg) {
+  const compact = normalizeMatchText(msg);
+  if (!compact) return false;
+  return /아니|말고|그냥|정정/u.test(compact)
+    || /(?:으로|로)(?:요|용|할게|할께요|해|부탁|주문)?$/u.test(compact);
+}
+
+function stripCorrectionWords(msg) {
+  return normalizeText(String(msg || ""))
+    .replace(/^(?:아니요|아뇨|아니|그냥|정정)\s*/u, "")
+    .replace(/(?:으로|로)(?:요|용|할게|할께요|해|부탁|주문)?\s*$/u, "")
+    .trim();
+}
+
+function isAddIntent(msg) {
+  const compact = normalizeMatchText(msg);
+  if (!compact) return false;
+  if (isQuestionLike(msg)) {
+    const asks = /[?？]|있나요|되나요|될까요|인가요|건가요|일까요|맞나요|가능/u.test(compact);
+    if (asks || !/추가|더/u.test(compact)) return false;
+  }
+  const more = hasMoreQty(compact);
+  const added = /추가/u.test(compact) && !/추가(?:문의|설명|비용|금|배송)/u.test(compact);
+  const morePlease = /더(?:주세요|주세용|주세여|줘요|담아|주문|구매)/u.test(compact);
+  const again = /한번더/u.test(compact) || /또(?:하나|한개|한장|주문|구매|주세요)/u.test(compact);
+  if (!more && !added && !morePlease && !again) return false;
+  if (isChangeIntent(msg) && /(?:으로|로)(?:변경|바꿔|교체|수정)/u.test(compact) && !more) return false;
+  return true;
+}
+
+function parseAddQty(msg) {
+  const compact = normalizeMatchText(msg);
+  const wordQty = { 한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4, 다섯: 5 };
+  const patterns = [
+    /(\d+)\s*(?:개|장|박스|상자|세트|셋트|벌)?\s*(?:만)?\s*더/u,
+    /더(?:로)?(\d+)\s*(?:개|장)?/u,
+    /(한|하나|두|둘|세|셋|네|넷|다섯)\s*(?:개|장)?\s*(?:만)?\s*더/u,
+    /더(?:로)?(한|하나|두|둘|세|셋|네|넷|다섯)/u,
+    /(\d+)\s*(?:개|장|박스|상자|세트|셋트|벌)?\s*추가/u,
+    /추가(?:로)?(\d+)\s*(?:개|장)?/u,
+    /(한|하나|두|둘|세|셋|네|넷|다섯)\s*(?:개|장)?\s*추가/u,
+    /추가(?:로)?(한|하나|두|둘|세|셋|네|넷|다섯)/u
+  ];
+  for (const pattern of patterns) {
+    const match = compact.match(pattern);
+    if (!match) continue;
+    const raw = match[1];
+    const qty = wordQty[raw] || Number(raw);
+    if (qty > 0) return qty;
+  }
+  return 1;
+}
+
+function stripAddWords(msg) {
+  let work = normalizeMatchText(msg);
+  work = work.replace(/(?:한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(?:개|장|박스|상자|세트|셋트|벌)?\s*(?:만)?\s*더(?:주세요|주세용|주세여|줘요|요|용)?/gu, "");
+  work = work.replace(/더(?:로)?(?:한|하나|두|둘|세|셋|네|넷|다섯|\d+)\s*(?:개|장)?(?:주세요|주세용|주세여|줘요|요|용)?/gu, "");
+  work = work.replace(/더(?:주세요|주세용|주세여|줘요|담아주세요|담아|주문|구매)/gu, "");
+  work = work.replace(/한번더(?:주세요|주세용|주세여|요|용)?/gu, "");
+  work = work.replace(/또(?:하나|한개|한장|주문|구매|주세요|요)/gu, "");
+  work = removePhrases(work, [
+    "추가해주세요", "추가해줘요", "추가해줘", "추가할게요", "추가할께요", "추가합니다",
+    "추가주문합니다", "추가주문요", "추가주문", "추가요", "추가로", "추가해", "추가"
+  ]);
+  work = removePhrases(work, [...FOLLOW_WORDS, ...ORDER_PHRASES]);
+  work = work.replace(/(?:으로|로|은|는|을|를|도|만|이요|여요|요|용|여|번)+/gu, "");
+  return work;
+}
+
 function revisionBody(msg) {
   let work = normalizeText(msg);
   const arrow = work.match(/^(.*?)\s*(?:->|→)\s*(.+)$/u);
@@ -667,7 +756,8 @@ function revisionBody(msg) {
   for (const phrase of CHANGE_PHRASES.slice().sort((a, b) => b.length - a.length)) {
     work = work.split(phrase).join(" ");
   }
-  work = normalizeText(work).replace(/(?:으로|로)\s*$/u, "");
+  work = normalizeText(work).replace(/^(?:추가로|추가)\s*/u, "");
+  work = work.replace(/(?:으로|로)\s*$/u, "");
   const pivot = work.match(/^(?:.*?)(?:을|를)\s*(.+)$/u);
   if (pivot?.[1]) work = normalizeText(pivot[1]).replace(/(?:으로|로)\s*$/u, "");
   return normalizeText(work);
@@ -769,10 +859,54 @@ function parseColorSizeQty(text, opts = {}) {
   return items && items[0] ? items[0] : null;
 }
 
+function onlyOrderDecorations(compact) {
+  let rest = String(compact || "");
+  rest = removePhrases(rest, [...FOLLOW_WORDS, ...ORDER_PHRASES, ...NON_ORDER_PHRASES]);
+  rest = rest.replace(/\d+(?:개|장|박스|상자|세트|셋트|벌)?/g, "");
+  rest = removePhrases(rest, Object.keys(QTY_WORDS));
+  const aliases = [...Object.keys(COLORS), ...Object.keys(SIZE_ALIAS), "사이즈", "컬러", "색상"]
+    .map((alias) => normalizeMatchText(alias))
+    .filter((alias) => alias.length >= 2)
+    .sort((a, b) => b.length - a.length);
+  for (const alias of aliases) rest = rest.split(alias).join("");
+  rest = rest.replace(/(?:으로|로|은|는|을|를|도|만|이요|여요|요|용|여|번|개|장|[smlf])/g, "");
+  return !rest;
+}
+
+function partialProductFragment(msg, product) {
+  const productCompact = normalizeMatchText(product);
+  if (productCompact.length < 2) return null;
+  let compact = normalizeMatchText(msg);
+  if (!compact) return null;
+  let matched = "";
+  for (let guard = 0; compact && guard < 6; guard += 1) {
+    let piece = "";
+    const max = Math.min(productCompact.length, compact.length);
+    for (let len = max; len >= 2; len -= 1) {
+      const prefix = productCompact.slice(0, len);
+      const suffix = productCompact.slice(-len);
+      if (compact.includes(prefix)) {
+        piece = prefix;
+        break;
+      }
+      if (suffix !== prefix && compact.includes(suffix)) {
+        piece = suffix;
+        break;
+      }
+    }
+    if (!piece) break;
+    compact = compact.replace(piece, "");
+    matched += piece;
+  }
+  if (matched.length < 2 || !onlyOrderDecorations(compact)) return null;
+  return { fragment: matched, rest: compact };
+}
+
 function mentionsAssignedProduct(msg, product) {
   const productCompact = normalizeMatchText(product);
   if (!productCompact) return false;
-  return normalizeMatchText(msg).includes(productCompact);
+  if (normalizeMatchText(msg).includes(productCompact)) return true;
+  return Boolean(partialProductFragment(msg, product));
 }
 
 function getOrderKey(orderObj) {
@@ -839,12 +973,19 @@ module.exports = {
   parseCancelQty,
   stripCancelWords,
   isChangeIntent,
+  isQtyOnly,
+  isLowerQtyCorrection,
+  stripCorrectionWords,
+  isAddIntent,
+  parseAddQty,
+  stripAddWords,
   revisionBody,
   parseBareRevisionQty,
   parseQtyChangeMessage,
   isSafeImmediateQty,
   parseColorSizeQty,
   parseColorSizeQtyList,
+  partialProductFragment,
   mentionsAssignedProduct,
   getOrderKey
 };

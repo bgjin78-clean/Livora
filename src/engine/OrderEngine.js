@@ -9,6 +9,12 @@ const {
   parseCancelQty,
   stripCancelWords,
   isChangeIntent,
+  isQtyOnly,
+  isLowerQtyCorrection,
+  stripCorrectionWords,
+  isAddIntent,
+  parseAddQty,
+  stripAddWords,
   revisionBody,
   parseBareRevisionQty,
   parseQtyChangeMessage,
@@ -49,6 +55,7 @@ const {
   startsWithFollowWord,
   parseColorSizeQtyList,
   mentionsAssignedProduct,
+  partialProductFragment,
   getOrderKey
 } = require("./parse");
 
@@ -238,6 +245,46 @@ class OrderEngine {
       };
     }
     return null;
+  }
+
+  orderFromPartial(reg, item) {
+    const order = this.orderFromRegistration(reg, item.qty || 1);
+    const colorLabel = item.color ? this.labelForCanonicalColor(reg, item.color) : "";
+    const sizeLabel = item.size || "";
+    if (colorLabel || sizeLabel) {
+      order.color = colorLabel;
+      order.size = sizeLabel;
+      order.option = [colorLabel, sizeLabel].filter(Boolean).join(" ");
+    }
+    return order;
+  }
+
+  parsePartialProductOrders(msg) {
+    const hits = [];
+    for (const reg of this.getAllRegistrations()) {
+      if (reg.type !== "product" && reg.type !== "option") continue;
+      const found = partialProductFragment(msg, reg.product);
+      if (!found) continue;
+      const full = normalizeMatchText(reg.product);
+      const score = (found.fragment === full ? 1000 : 0) + found.fragment.length;
+      hits.push({ reg, ...found, score });
+    }
+    if (!hits.length) return null;
+    const top = Math.max(...hits.map((hit) => hit.score));
+    let best = hits.filter((hit) => hit.score === top);
+    const current = this.currentRegistration();
+    if (best.length > 1 && current) {
+      const preferred = best.filter((hit) => hit.reg.key === current.key || hit.reg.product === current.product);
+      if (preferred.length) best = preferred;
+    }
+    best.sort((a, b) => Number(b.reg.registeredAtMs || 0) - Number(a.reg.registeredAtMs || 0));
+    const winner = best[0];
+    const reg = this.findRegistrationByProduct(winner.reg.product) || winner.reg;
+    const items = parseColorSizeQtyList(winner.rest, { allowKeywordOnly: true, allowBareNumber: true });
+    const details = items && items.length
+      ? items
+      : [{ color: "", size: "", qty: extractFlexibleQty(msg, 1) }];
+    return details.map((item) => this.orderFromPartial(reg, item));
   }
 
   expandedOptions(reg) {
@@ -487,6 +534,8 @@ class OrderEngine {
         return [this.applyDefaultQty(this.withMatch(parsed, source, text), text)];
       }
     }
+    const partials = this.parsePartialProductOrders(text);
+    if (partials) return partials.map((item) => this.applyDefaultQty(this.withMatch(item, "named", text), text));
     const latestBare = this.parseLatestProductOrder(text);
     if (latestBare) {
       const source = latestBare.unregistered ? "unregistered" : "current";
@@ -703,7 +752,7 @@ class OrderEngine {
     let latest = null;
     for (const [key, item] of Object.entries(user.items || {})) {
       if (item.status === "shortage") continue;
-      if (!latest || String(item.time || "") > String(latest.item.time || "")) {
+      if (!latest || String(item.time || "") >= String(latest.item.time || "")) {
         latest = { key, item };
       }
     }
@@ -846,7 +895,7 @@ class OrderEngine {
   latestEntry(entries) {
     let latest = null;
     for (const pair of entries) {
-      if (!latest || String(pair[1].time || "") > String(latest[1].time || "")) latest = pair;
+      if (!latest || String(pair[1].time || "") >= String(latest[1].time || "")) latest = pair;
     }
     return latest;
   }
@@ -1023,26 +1072,30 @@ class OrderEngine {
     const requested = Math.max(1, Number(parsed.qty || 1));
     const confirmedQty = Number(existing?.qty || 0);
     const shortageQty = Number(shortage?.qty || 0);
-    const explicit = hasExplicitQty(msg);
+    const explicit = hasExplicitQty(msg) || hasUnitQty(msg);
     if (!parsed.option && !parsed.color && !parsed.size) {
-      const lines = Object.values(this.orders[uid].items).filter((item) =>
-        item.status !== "shortage" && item.product === (parsed.product || "")
-      );
-      if (lines.length === 1 && explicit && requested !== Number(lines[0].qty || 0)) {
-        this.applyStockedQty(uid, nick, lines[0], requested, msg);
-        return "ok";
+      const found = this.productEntries(uid, parsed.product || "");
+      const picked = found.entries.length === 1
+        ? found.entries[0][1]
+        : (found.entries.length > 1 ? this.latestEntry(found.entries)[1] : null);
+      if (picked && explicit && requested !== Number(picked.qty || 0)) {
+        const current = Number(picked.qty || 0);
+        if (requested > current || isLowerQtyCorrection(msg) || isQtyOnly(msg)) {
+          this.applyStockedQty(found.uidKey || uid, nick, picked, requested, msg);
+          return "ok";
+        }
       }
-      if (lines.length >= 1) {
+      if (found.entries.length >= 1) {
         this.onEvent("duplicate-order", {
           nickname: nick,
           product: parsed.product || "",
-          option: lines[0].option || lines[0].color || "",
-          qty: Number(lines[0].qty || 0)
+          option: (picked || found.entries[0][1]).option || (picked || found.entries[0][1]).color || "",
+          qty: Number((picked || found.entries[0][1]).qty || 0)
         });
         return "duplicate";
       }
     }
-    if (confirmedQty > 0 && (!explicit || requested === confirmedQty + shortageQty)) {
+    if (confirmedQty > 0 && (!explicit || requested === confirmedQty + shortageQty || (requested < confirmedQty && !isLowerQtyCorrection(msg) && !isQtyOnly(msg)))) {
       this.onEvent("duplicate-order", {
         nickname: nick,
         product: parsed.product || "",
@@ -1068,9 +1121,94 @@ class OrderEngine {
     return "ok";
   }
 
+  resolveAddTarget(uid, parsed) {
+    if (parsed?.product) {
+      const found = this.productEntries(uid, parsed.product);
+      const specific = Boolean(parsed.color || parsed.size || parsed.option);
+      if (specific) {
+        const match = found.entries.find(([, item]) => this.sameOrderLine(item, parsed));
+        if (match) return { uidKey: found.uidKey, item: match[1] };
+        return { uidKey: found.uidKey || uid, item: null, create: parsed };
+      }
+      if (found.entries.length === 1) return { uidKey: found.uidKey, item: found.entries[0][1] };
+      if (found.entries.length > 1) {
+        const latest = this.latestEntry(found.entries);
+        return { uidKey: found.uidKey, item: latest[1] };
+      }
+      return { uidKey: uid, item: null, create: parsed };
+    }
+    const found = this.productEntries(uid, "");
+    if (found.entries.length === 1) return { uidKey: found.uidKey, item: found.entries[0][1] };
+    if (found.entries.length > 1) {
+      const latest = this.latestEntry(found.entries);
+      return { uidKey: found.uidKey, item: latest[1] };
+    }
+    const current = this.currentRegistration();
+    if (!current) return null;
+    return { uidKey: uid, item: null, create: this.orderFromRegistration(current, 1) };
+  }
+
+  additionAmount(msg, parsed, stripped, count) {
+    const spoken = parseAddQty(msg);
+    if (count > 1) return Number(parsed?.qty || 1);
+    if (spoken > 1) return spoken;
+    if (parsed && hasExplicitQty(stripped)) return Number(parsed.qty || 1);
+    return spoken || 1;
+  }
+
+  handleAdd(uid, nick, msg) {
+    const stripped = stripAddWords(msg);
+    const parsedList = stripped
+      ? this.parseMessageToOrders(stripped).filter((item) => item && !item.unregistered)
+      : [];
+    const targets = parsedList.length ? parsedList : [null];
+    const amountForReview = this.additionAmount(msg, targets[0], stripped, targets.length);
+    if (!isSafeImmediateQty(amountForReview)) {
+      this.pushReview(
+        { id: `${uid}-${Date.now()}`, uid, nick, msg, time: now() },
+        `추가 수량 ${amountForReview}개는 자동 확정하지 않습니다 (1~10개만 바로 접수)`,
+        targets[0] || { product: this.qtyMode.product || "", qty: amountForReview }
+      );
+      return true;
+    }
+    let accepted = false;
+    for (const parsed of targets) {
+      const amount = this.additionAmount(msg, parsed, stripped, targets.length);
+      const target = this.resolveAddTarget(uid, parsed);
+      if (!target) continue;
+      if (target.item) {
+        const next = Number(target.item.qty || 0) + amount;
+        this.applyStockedQty(target.uidKey, nick, target.item, next, msg);
+        this.onEvent("add-order", {
+          nickname: nick,
+          product: target.item.product || "",
+          option: target.item.option || target.item.color || "",
+          added: amount,
+          qty: next
+        });
+        accepted = true;
+        continue;
+      }
+      if (!target.create?.product) continue;
+      this.applyStockedQty(target.uidKey, nick, target.create, amount, msg);
+      this.onEvent("add-order", {
+        nickname: nick,
+        product: target.create.product || "",
+        option: target.create.option || target.create.color || "",
+        added: amount,
+        qty: amount
+      });
+      accepted = true;
+    }
+    return accepted;
+  }
+
   handleIncomingOrder(chat) {
     if (isCancelIntent(chat.msg) || CANCEL_WORDS.some((w) => chat.msg.includes(w))) {
       return this.handleCancel(chat.uid, chat.nick, chat.msg);
+    }
+    if (isAddIntent(chat.msg)) {
+      return this.handleAdd(chat.uid, chat.nick, chat.msg);
     }
     if (isChangeIntent(chat.msg)) {
       return this.handleRevision(chat.uid, chat.nick, chat.msg);
@@ -1078,7 +1216,8 @@ class OrderEngine {
     if (parseQtyChangeMessage(chat.msg)) {
       return this.handleQtyChange(chat.uid, chat.nick, chat.msg);
     }
-    const parsedList = this.parseMessageToOrders(chat.msg).filter(Boolean);
+    const spoken = isLowerQtyCorrection(chat.msg) ? stripCorrectionWords(chat.msg) : chat.msg;
+    const parsedList = this.parseMessageToOrders(spoken).filter(Boolean);
     if (!parsedList.length) return false;
     let accepted = false;
     for (const parsed of parsedList) {

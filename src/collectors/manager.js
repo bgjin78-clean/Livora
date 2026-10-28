@@ -12,6 +12,7 @@ const {
 } = require("../export/screenshot");
 const { renderInvoices } = require("../export/images");
 const { sendSessionMail } = require("../export/mail");
+const { keepSessionFiles, saveToUserDesktop } = require("../export/keep");
 const { excelFileName } = require("../export/fileName");
 const { archiveSellerFile } = require("../export/archive");
 const path = require("path");
@@ -87,6 +88,7 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
     channelId: approved.channel_id
   });
 
+  session.notify = broadcast;
   const onChat = (chat) => engine.ingestChat(chat);
   const onStatus = (status, extra = {}) => {
     if (status === "connected") session.error = "";
@@ -95,6 +97,7 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
       status,
       error: extra.error || session.error || ""
     }));
+    if (status === "ended" && !session.finishing) finishLive(sessionId, extra.error || "ended");
   };
 
   try {
@@ -131,6 +134,8 @@ function invoiceOrdersFromEngine(session) {
     nickname: o.nickname,
     product: o.product,
     option: o.option,
+    color: o.color,
+    size: o.size,
     qty: o.qty,
     price: o.price,
     amount: o.amount
@@ -187,6 +192,14 @@ async function finishSessionFiles(session) {
   } catch (err) {
     console.error("[stop invoices]", err.message);
   }
+  const kept = keepSessionFiles(session.id, files);
+  let desktop = { ok: false, skipped: true, reason: "no-desktop" };
+  try {
+    desktop = saveToUserDesktop(seller?.username, files);
+  } catch (err) {
+    console.error("[desktop]", err.message);
+    desktop = { ok: false, error: err.message };
+  }
   let mail = { ok: false, skipped: true };
   try {
     mail = await sendSessionMail({
@@ -200,14 +213,25 @@ async function finishSessionFiles(session) {
     mail = { ok: false, error: err.message };
   }
   return {
-    files: files.map((file) => file.filename),
-    mail
+    files: kept,
+    mail,
+    desktop
   };
 }
 
-async function stopSession(sessionId) {
+const finishing = new Map();
+
+function finishLive(sessionId, reason = "ended") {
+  if (finishing.has(sessionId)) return finishing.get(sessionId);
+  const job = finishLiveNow(sessionId, reason).finally(() => finishing.delete(sessionId));
+  finishing.set(sessionId, job);
+  return job;
+}
+
+async function finishLiveNow(sessionId, reason) {
   const session = sessions.get(sessionId);
-  if (!session) return null;
+  if (!session || session.finishing) return null;
+  session.finishing = true;
   session.status = "stopped";
   try {
     if (session.stop) await session.stop();
@@ -215,10 +239,19 @@ async function stopSession(sessionId) {
   const wrap = await finishSessionFiles(session);
   db.updateLiveSession(sessionId, {
     status: "stopped",
-    stoppedAt: new Date().toISOString()
+    stoppedAt: new Date().toISOString(),
+    error: reason && reason !== "ended" ? String(reason) : ""
   });
+  const result = { id: sessionId, status: "stopped", reason, platform: session.platform, ...wrap };
+  if (session.notify) {
+    session.notify(sessionId, "session-closed", withSessionMeta(session, result));
+  }
   sessions.delete(sessionId);
-  return { id: sessionId, status: "stopped", ...wrap };
+  return result;
+}
+
+async function stopSession(sessionId) {
+  return finishLive(sessionId, "stopped");
 }
 
 function saveClientOrderShot(session, payload, image) {

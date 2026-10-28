@@ -151,13 +151,36 @@ main { padding: 28px 32px 40px; }
 .product-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   background: #0c0d12;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 6px 8px 6px 12px;
+  border-radius: 16px;
+  padding: 6px 8px 6px 10px;
   font-size: 13px;
 }
+.reg-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.reg-field em {
+  font-style: normal;
+  font-size: 11px;
+  color: #9aa3b5;
+  background: #1a1d27;
+  border-radius: 999px;
+  padding: 2px 6px;
+}
+.reg-now {
+  font-size: 11px;
+  color: #f3d19c;
+  padding: 2px 6px;
+}
+.register-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .product-chip.current { border-color: rgba(232, 195, 122, 0.45); color: #f3d19c; }
 .product-chip.has-shot { cursor: pointer; }
 .product-chip button {
@@ -274,6 +297,7 @@ th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--li
   gap: 8px;
   font-size: 13px;
 }
+.file-item .ghost-btn { width: auto; flex: 0 0 auto; }
 .stack-item button { background: transparent; color: var(--danger); border: 0; cursor: pointer; }
 .stack-item button.edit-btn { color: var(--gold); }
 .stack-item span { min-width: 0; word-break: break-word; }

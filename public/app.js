@@ -555,7 +555,7 @@ function updateFilesHint() {
     hint.textContent = "아직 받을 방송이 없습니다. 수집을 한 번 하면 종료 후에도 받을 수 있습니다.";
     return;
   }
-  const mailNote = state.mailReady ? " 종료하면 등록한 메일로도 보냅니다." : "";
+  const mailNote = state.mailReady ? " 방송이 끝나거나 끊기면 관리자 메일로도 보냅니다." : "";
   hint.textContent = `직전 방송: ${platformLabel(session.platform)} ${session.channelId || session.channel_id || ""} · 다음 수집 전까지 이 방송을 받습니다.${mailNote}`;
 }
 
@@ -639,13 +639,15 @@ function connectWs() {
         : [];
       renderChats();
     }
-    if (msg.type === "stock-block" || msg.type === "duplicate-order") {
+    if (msg.type === "stock-block" || msg.type === "duplicate-order" || msg.type === "add-order") {
       const p = msg.payload || {};
       const current = deskEl(p.platform, "current");
       if (current) {
         current.textContent = msg.type === "duplicate-order"
           ? `중복 주문: ${p.nickname || ""} / ${p.product || ""} ${p.option || ""}`.trim()
-          : `재고부족: ${p.nickname || ""} / ${p.product || ""} ${p.option || ""} ${p.shortage || ""}개`.trim();
+          : msg.type === "add-order"
+            ? `추가 주문: ${p.nickname || ""} / ${p.product || ""} ${p.option || ""} +${p.added || 1} → ${p.qty || ""}개`.trim()
+            : `재고부족: ${p.nickname || ""} / ${p.product || ""} ${p.option || ""} ${p.shortage || ""}개`.trim();
       }
     }
     if (msg.type === "order") {
@@ -701,6 +703,15 @@ function connectWs() {
     }
     if (msg.type === "shot-status" && msg.payload && !msg.payload.ok) {
       setShotHint(msg.payload.error || "화면 캡처에 실패했습니다. 수동 캡처로 다시 찍을 수 있습니다.");
+    }
+    if (msg.type === "session-closed") {
+      const payload = msg.payload || {};
+      state.sessions = state.sessions.filter((row) => row.platform !== payload.platform);
+      setLastSession(payload);
+      setLiveBadge();
+      saveBroadcastFiles(payload).then((note) => {
+        if (note) $("filesHint").textContent = note;
+      });
     }
     if (msg.type === "status") {
       if (msg.payload.platform) {
@@ -1015,9 +1026,120 @@ document.querySelectorAll(".admin-tab-btn").forEach((btn) => {
   btn.onclick = () => setAdminTab(btn.dataset.adminTab);
 });
 
+function desktopStore() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("livora-desktop", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("kv");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function readDesktopHandle() {
+  try {
+    const db = await desktopStore();
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction("kv").objectStore("kv").get("root");
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function writeDesktopHandle(handle) {
+  const db = await desktopStore();
+  await new Promise((resolve, reject) => {
+    const request = db.transaction("kv", "readwrite").objectStore("kv").put(handle, "root");
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function grantedDesktopHandle() {
+  const handle = await readDesktopHandle();
+  if (!handle?.queryPermission) return null;
+  const permission = await handle.queryPermission({ mode: "readwrite" });
+  return permission === "granted" ? handle : null;
+}
+
+async function rememberDesktopFolder() {
+  if (!window.showDirectoryPicker) return false;
+  if (await grantedDesktopHandle()) return true;
+  try {
+    const handle = await window.showDirectoryPicker({
+      id: "livora-desktop",
+      startIn: "desktop",
+      mode: "readwrite"
+    });
+    await writeDesktopHandle(handle);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function folderNameForUser() {
+  return String(state.user?.username || "seller").replace(/[\\/:*?"<>|]/g, "_").trim() || "seller";
+}
+
+const savingBundles = new Map();
+
+async function saveBroadcastFiles(bundle) {
+  const sessionId = bundle?.id || bundle?.sessionId;
+  const files = bundle?.files || [];
+  if (!sessionId || !files.length) return "";
+  if (savingBundles.has(sessionId)) return savingBundles.get(sessionId);
+  const job = writeBroadcastFiles(bundle, sessionId, files);
+  savingBundles.set(sessionId, job);
+  return job;
+}
+
+async function writeBroadcastFiles(bundle, sessionId, files) {
+  if (bundle.desktop?.ok) return `바탕화면 ${bundle.desktop.dir} 폴더에 주문·채팅·정산서를 저장했습니다. 서버에는 1주일 보관합니다.`;
+  let root = await grantedDesktopHandle();
+  if (!root && window.showDirectoryPicker) {
+    try {
+      root = await window.showDirectoryPicker({
+        id: "livora-desktop",
+        startIn: "desktop",
+        mode: "readwrite"
+      });
+      await writeDesktopHandle(root);
+    } catch {
+      root = null;
+    }
+  }
+  if (root) {
+    const folder = await root.getDirectoryHandle(folderNameForUser(), { create: true });
+    for (const name of files) {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kept/${encodeURIComponent(name)}`, { credentials: "same-origin" });
+      if (!res.ok) continue;
+      const handle = await folder.getFileHandle(name, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(await res.blob());
+      await writable.close();
+    }
+    return `바탕화면의 ${folderNameForUser()} 폴더에 주문·채팅·정산서를 저장했습니다. 서버에는 1주일 보관하고 관리자 메일로도 보냅니다.`;
+  }
+  for (const name of files) {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/kept/${encodeURIComponent(name)}`, { credentials: "same-origin" });
+    if (!res.ok) continue;
+    const url = URL.createObjectURL(await res.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  return "바탕화면 폴더를 아직 고르지 않아 파일을 다운로드했습니다. 다음 수집을 시작할 때 바탕화면을 선택하면 아이디 폴더에 저장됩니다.";
+}
+
 async function startPlatform(platform) {
   const channelId = deskEl(platform, "channel")?.value || "";
   if (!channelId) return alert(`${platformLabel(platform)} 승인 채널이 없습니다.`);
+  await rememberDesktopFolder();
   state.activePlatform = platform;
   try {
     $("liveBadge").textContent = "수집중";
@@ -1064,12 +1186,17 @@ async function stopPlatform(platform) {
   setLiveBadge();
   const mail = data.mail || {};
   let mailText = "";
-  if (mail.ok) mailText = ` 메일 ${mail.to || ""}로 엑셀·정산서를 보냈습니다.`;
-  else if (mail.error) mailText = ` 메일은 보내지 못했습니다. ${mail.error}`;
-  else if (mail.reason === "no-target") mailText = " 받을 메일이 없어 파일만 저장했습니다. 관리 화면에서 메일을 넣어 주세요.";
+  if (mail.ok) mailText = ` 관리자 메일 ${mail.to || ""}로 보냈습니다.`;
+  else if (mail.error) mailText = ` 관리자 메일은 보내지 못했습니다. ${mail.error}`;
+  else if (mail.reason === "no-target") mailText = " 관리자 메일이 없어 파일만 저장했습니다. 관리자 계정에 메일을 넣어 주세요.";
   else if (mail.reason === "smtp") mailText = " 메일 서버 설정이 없어 파일만 저장했습니다.";
-  $("filesHint").textContent = `${platformLabel(platform)} 종료 저장이 끝났습니다. 엑셀·정산서·채팅 파일을 받으세요.${mailText}`;
-  if (mail.ok) alert(`${platformLabel(platform)} 종료. 메일을 보냈습니다.`);
+  const notes = [];
+  for (const bundle of data.bundles || []) {
+    const saved = await saveBroadcastFiles(bundle);
+    if (saved) notes.push(saved);
+  }
+  $("filesHint").textContent = `${platformLabel(platform)} 종료 저장이 끝났습니다.${mailText} ${notes.join(" ")}`.trim();
+  if (mail.ok) alert(`${platformLabel(platform)} 종료. 관리자 메일로 보냈습니다.`);
 }
 
 function productKey(p) {
@@ -1109,6 +1236,43 @@ function applyProductState(platform, products, qtyMode) {
   setCurrentProduct(platform, current, mode);
 }
 
+function fieldList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  if (!value) return [];
+  if (typeof value === "string" && value.trim().startsWith("[")) {
+    try { return fieldList(JSON.parse(value)); } catch { /* 문자열 옵션으로 처리 */ }
+  }
+  return String(value).split(/[,./|]+/).map((item) => item.trim()).filter(Boolean);
+}
+
+function productFields(p) {
+  const fields = [];
+  const rawName = String(p?.product || "").trim();
+  const number = String(p?.number || (/^\d+$/.test(rawName) ? rawName : "")).trim();
+  const name = rawName && rawName !== number ? rawName : "";
+  if (name) fields.push(["상품명", name]);
+  if (number) fields.push(["번호", number]);
+  const sizes = fieldList(p?.sizes);
+  const colors = fieldList(p?.colors);
+  if (sizes.length) fields.push(["사이즈", sizes.join(", ")]);
+  if (colors.length) fields.push(["색상", colors.join(", ")]);
+  if (!sizes.length && !colors.length) {
+    const options = fieldList(p?.options?.length ? p.options : p?.options_json);
+    if (options.length) fields.push(["옵션", options.join(", ")]);
+  }
+  const price = Number(p?.price || 0);
+  if (price) fields.push(["가격", `${price.toLocaleString("ko-KR")}원`]);
+  const qty = Number(p?.defaultQty || p?.default_qty || 0);
+  if (qty > 1) fields.push(["수량", `${qty}개`]);
+  const stock = Number(p?.stock || 0);
+  if (stock) fields.push(["재고", `${stock}개`]);
+  return fields;
+}
+
+function fieldHtml(label, value) {
+  return `<span class="reg-field"><em>${escapeAttr(label)}</em>${escapeAttr(value)}</span>`;
+}
+
 function renderProductHistory(platform, qtyMode) {
   const el = deskEl(platform, "products");
   if (!el) return;
@@ -1125,15 +1289,13 @@ function renderProductHistory(platform, qtyMode) {
   }
   const sessionId = sessionForPlatform(platform)?.id || "";
   el.innerHTML = items.map((p) => {
-    const extra = [
-      p.sizes?.length ? p.sizes.join("/") : (p.options || []).join("/"),
-      p.colors?.length ? p.colors.join("/") : "",
-      Number(p.price) ? `${Number(p.price).toLocaleString("ko-KR")}원` : ""
-    ].filter(Boolean).join(" ");
+    const fields = productFields(p);
     const shot = p.shotFile || p.shot_path || "";
     return `
       <span class="product-chip ${p.current ? "current" : ""} ${shot ? "has-shot" : ""}" data-key="${escapeAttr(p.key)}" data-shot="${escapeAttr(shot)}" data-session="${escapeAttr(sessionId)}" title="${shot ? "클릭하면 이 상품 캡처를 엽니다" : ""}">
-        ${escapeAttr(p.name)}${extra ? ` ${escapeAttr(extra)}` : ""}${p.current ? " · 현재" : ""}${shot ? " · 캡처" : ""}
+        ${fields.map(([label, value]) => fieldHtml(label, value)).join("")}
+        ${p.current ? `<span class="reg-now">현재</span>` : ""}
+        ${shot ? `<span class="reg-now">캡처</span>` : ""}
         <button type="button" data-remove="${escapeAttr(p.key)}">삭제</button>
       </span>`;
   }).join("");
@@ -1145,25 +1307,20 @@ function setCurrentProduct(platform, reg, qtyMode) {
   if (qtyMode !== undefined) state.qtyByPlatform[platform] = qtyMode;
   const mode = state.qtyByPlatform[platform];
   if (qtyBtn) qtyBtn.textContent = mode?.enabled ? "이거모드 ON" : "이거모드";
-  const product = reg?.displayName || mode?.product;
+  const product = reg?.product || reg?.number || mode?.product;
   if (!current) return;
   if (!product) {
     current.textContent = "현재 등록 상품 없음";
     renderProductHistory(platform, mode);
     return;
   }
-  const price = Number(reg?.price ?? mode?.price ?? 0);
-  const stock = Number(reg?.stock ?? mode?.stock ?? 0);
-  const bits = [product];
-  const sizes = (reg?.sizes || []).join("/");
-  const colors = (reg?.colors || []).join("/");
-  if (sizes) bits.push(sizes);
-  if (colors) bits.push(colors);
-  const defaultQty = Number(reg?.defaultQty ?? mode?.defaultQty ?? 1);
-  if (defaultQty > 1) bits.push(`수량 ${defaultQty}`);
-  if (price) bits.push(`${price.toLocaleString("ko-KR")}원`);
-  if (stock) bits.push(`재고 ${stock}`);
-  current.textContent = `현재상품: ${bits.join(" · ")}`;
+  const fields = productFields({
+    ...reg,
+    price: reg?.price ?? mode?.price ?? 0,
+    stock: reg?.stock ?? mode?.stock ?? 0,
+    defaultQty: reg?.defaultQty ?? mode?.defaultQty ?? 1
+  });
+  current.innerHTML = `<span class="reg-now">현재상품</span>${fields.map(([label, value]) => fieldHtml(label, value)).join("")}`;
   renderProductHistory(platform, mode);
 }
 
@@ -1513,12 +1670,29 @@ $("invoiceBtn").onclick = async () => {
     const data = await api(`/api/sessions/${session.id}/export/invoices`);
     const files = data.files || [];
     const label = platformLabel(session.platform) || "방송";
+    blocks.push(`<p class="register-hint">${label} 구매자별 정산서입니다. 이미지를 받아 고객에게 메일이나 카톡으로 보낼 수 있습니다.</p>`);
     blocks.push(files.length
-      ? files.map((file) => `<a class="file-item" href="/api/sessions/${session.id}/invoices/${encodeURIComponent(file)}" target="_blank">${label} · ${file}</a>`).join("")
-      : `<div class="file-item">${label} 정산서가 없습니다.</div>`);
+      ? files.map((file) => {
+          const buyer = String(file).replace(/^정산서_/, "").replace(/\.jpg$/i, "");
+          return `<div class="file-item"><span>${escapeAttr(label)} · ${escapeAttr(buyer)}</span><button type="button" class="ghost-btn invoice-download" data-session="${escapeAttr(session.id)}" data-file="${escapeAttr(file)}">다운로드</button></div>`;
+        }).join("")
+      : `<div class="file-item">${label} 접수된 주문이 없어 정산서가 없습니다.</div>`);
   }
   $("fileList").innerHTML = blocks.join("") || "<div class='file-item'>생성된 정산서가 없습니다.</div>";
 };
+
+$("fileList").addEventListener("click", async (ev) => {
+  const button = ev.target.closest(".invoice-download");
+  if (!button) return;
+  try {
+    await downloadFile(
+      `/api/sessions/${encodeURIComponent(button.dataset.session)}/invoices/${encodeURIComponent(button.dataset.file)}`,
+      button.dataset.file
+    );
+  } catch (err) {
+    alert(err.message);
+  }
+});
 
 $("addUserBtn").onclick = async () => {
   try {

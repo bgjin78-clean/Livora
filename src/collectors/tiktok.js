@@ -106,6 +106,7 @@ async function startTikTok({ username, onChat, onStatus }) {
   const connection = new Connection(uniqueId, connectionOptions());
   let stopping = false;
   let reconnectTimer = null;
+  let offlineTries = 0;
 
   const handleChat = (data) => {
     const chat = normalizeEvent(data);
@@ -128,9 +129,17 @@ async function startTikTok({ username, onChat, onStatus }) {
     reconnectTimer = setTimeout(async () => {
       try {
         await open();
+        offlineTries = 0;
         onStatus("connected");
       } catch (err) {
-        onStatus("error", { error: tiktokConnectError(err) });
+        const message = tiktokConnectError(err);
+        const offline = /라이브 중이 아닙니다|offline|ended|not live/i.test(`${message} ${collectErrorText(err)}`);
+        offlineTries += offline ? 1 : 0;
+        if (offline && offlineTries >= 2) {
+          onStatus("ended", { error: "틱톡 방송 연결이 끊어져 주문·채팅·정산서를 저장합니다." });
+          return;
+        }
+        onStatus("error", { error: message });
         reconnect();
       }
     }, 3000);
@@ -139,7 +148,7 @@ async function startTikTok({ username, onChat, onStatus }) {
   connection.on(tiktok.ControlEvent?.DISCONNECTED || "disconnected", reconnect);
   connection.on(tiktok.WebcastEvent?.STREAM_END || "streamEnd", () => {
     if (stopping) return;
-    onStatus("ended");
+    onStatus("ended", { error: "틱톡 방송이 종료되어 주문·채팅·정산서를 저장합니다." });
   });
 
   try {

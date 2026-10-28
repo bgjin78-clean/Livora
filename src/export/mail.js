@@ -1,16 +1,23 @@
 const nodemailer = require("nodemailer");
 const config = require("../config");
+const db = require("../db");
 
-function mailTarget(seller) {
-  return String(seller?.mail_to || seller?.mailTo || config.mailTo || "").trim();
+function adminRecipients() {
+  const fromAccounts = db.listUsers()
+    .filter((user) => user.role === "admin" && user.status !== "stopped")
+    .map((user) => String(user.mail_to || "").trim())
+    .filter((mail) => mail.includes("@"));
+  const extra = String(config.mailTo || "").trim();
+  return [...new Set(extra ? [...fromAccounts, extra] : fromAccounts)];
 }
 
-function mailEnabled(seller) {
-  return Boolean(config.smtpUser && config.smtpPass && mailTarget(seller));
+function mailEnabled() {
+  return Boolean(config.smtpUser && config.smtpPass && adminRecipients().length);
 }
 
 async function sendSessionMail({ seller, platform, channelId, files = [] }) {
-  const to = mailTarget(seller);
+  const recipients = adminRecipients();
+  const to = recipients.join(", ");
   if (!config.smtpUser || !config.smtpPass) return { ok: false, skipped: true, reason: "smtp" };
   if (!to) return { ok: false, skipped: true, reason: "no-target" };
   const attachments = (files || [])
@@ -33,10 +40,10 @@ async function sendSessionMail({ seller, platform, channelId, files = [] }) {
     from: config.mailFrom || config.smtpUser,
     to,
     subject: `[Livora] ${who} ${platform || ""} 주문서`,
-    text: `${who} / ${platform || ""} ${channelId || ""}\n주문 엑셀·채팅 엑셀·닉네임 정산서 JPG를 첨부합니다.`,
+    text: `${who} / ${platform || ""} ${channelId || ""}\n방송이 끝나 주문 엑셀·채팅 엑셀·정산서를 첨부합니다.`,
     attachments
   });
   return { ok: true, to };
 }
 
-module.exports = { mailEnabled, sendSessionMail };
+module.exports = { mailEnabled, sendSessionMail, adminRecipients };

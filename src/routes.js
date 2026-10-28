@@ -85,7 +85,7 @@ function createRouter(broadcast) {
       sessions,
       session: current,
       lastSession: current || lastSessionFor(req.user.id),
-      mailReady: mailEnabled(req.user)
+      mailReady: mailEnabled()
     });
   });
 
@@ -289,7 +289,14 @@ function createRouter(broadcast) {
       session: remaining[0] || lastSession,
       lastSession,
       mail,
-      files
+      files,
+      bundles: stopped.filter(Boolean).map((row) => ({
+        id: row.id,
+        platform: row.platform,
+        files: row.files || [],
+        desktop: row.desktop || null,
+        mail: row.mail || null
+      }))
     });
   });
 
@@ -466,6 +473,19 @@ function createRouter(broadcast) {
     });
   });
 
+  router.get("/sessions/:id/kept/:file", auth.requireAuth, (req, res) => {
+    const session = db.getLiveSession(req.params.id);
+    if (!session || (session.user_id !== req.user.id && req.user.role !== "admin")) {
+      return res.status(404).json({ ok: false, message: "파일을 찾지 못했습니다." });
+    }
+    const name = path.basename(req.params.file || "");
+    const filePath = path.join(config.keptDir, session.id, name);
+    if (!name || name === "manifest.json" || !fs.existsSync(filePath)) {
+      return res.status(404).json({ ok: false, message: "파일을 찾지 못했습니다." });
+    }
+    res.download(filePath, name);
+  });
+
   router.get("/sessions/:id/export/excel", auth.requireAuth, async (req, res) => {
     const session = db.getLiveSession(req.params.id);
     if (!session || (session.user_id !== req.user.id && req.user.role !== "admin")) {
@@ -519,6 +539,8 @@ function createRouter(broadcast) {
           nickname: o.nick,
           product: o.product,
           option: o.option_name,
+          color: o.color,
+          size: o.size,
           qty: o.qty,
           price: o.price,
           amount: o.amount,
@@ -568,7 +590,7 @@ function createRouter(broadcast) {
     }
     const filePath = path.join(require("./config").invoicesDir, session.id, path.basename(req.params.file));
     if (!fs.existsSync(filePath)) return res.status(404).end();
-    res.sendFile(filePath);
+    res.download(filePath, path.basename(filePath));
   });
 
   return router;

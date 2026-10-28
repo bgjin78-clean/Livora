@@ -7,6 +7,7 @@ const db = require("./db");
 const { createRouter } = require("./routes");
 const { attachRealtime, broadcastToUser } = require("./realtime");
 const { purgeExpiredShots } = require("./export/screenshot");
+const { purgeExpiredFiles } = require("./export/keep");
 
 db.open();
 
@@ -14,6 +15,7 @@ function startShotCleanup() {
   const run = () => {
     try {
       purgeExpiredShots();
+      purgeExpiredFiles();
     } catch (err) {
       console.error("[shot cleanup]", err.message);
     }

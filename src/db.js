@@ -706,6 +706,12 @@ function getAdminFile(id) {
   return open().prepare("SELECT * FROM admin_files WHERE id = ?").get(id);
 }
 
+function deleteAdminFilesBefore(iso) {
+  const rows = open().prepare("SELECT * FROM admin_files WHERE created_at < ?").all(iso);
+  open().prepare("DELETE FROM admin_files WHERE created_at < ?").run(iso);
+  return rows;
+}
+
 function listAdminFiles({ userId, limit = 300 } = {}) {
   if (userId) {
     return open().prepare(`
@@ -748,6 +754,7 @@ module.exports = {
   insertAdminFile,
   getAdminFile,
   listAdminFiles,
+  deleteAdminFilesBefore,
   insertAlias,
   insertChat,
   upsertOrder,

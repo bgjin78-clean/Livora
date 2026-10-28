@@ -29,5 +29,7 @@ module.exports = {
   shotsDir: path.join(dataDir, "shots"),
   invoicesDir: path.join(dataDir, "invoices"),
   exportsDir: path.join(dataDir, "exports"),
-  adminCopiesDir: path.join(dataDir, "admin-copies")
+  adminCopiesDir: path.join(dataDir, "admin-copies"),
+  keptDir: path.join(dataDir, "kept"),
+  keepMs: 7 * 24 * 60 * 60 * 1000
 };
