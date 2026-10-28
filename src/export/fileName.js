@@ -31,9 +31,14 @@ function orderShotFileName({ seller, nick, product, at } = {}) {
   ].join("_") + ".jpg";
 }
 
+let productShotSeq = 0;
+
 function productShotFileName({ seller, product, at } = {}) {
+  productShotSeq = (productShotSeq + 1) % 1000;
+  const when = at || new Date();
+  const ms = String(when.getMilliseconds()).padStart(3, "0");
   return [
-    localDateTimeStamp(at),
+    `${localDateTimeStamp(when)}${ms}${String(productShotSeq).padStart(3, "0")}`,
     sellerFileTag(seller),
     "F2",
     safeSegment(product, "product")

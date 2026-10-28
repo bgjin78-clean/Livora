@@ -294,7 +294,7 @@ async function ensureScreenShare() {
       screenVideo.muted = true;
       screenVideo.playsInline = true;
       screenVideo.setAttribute("playsinline", "");
-      screenVideo.style.cssText = "position:fixed;left:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;";
+      screenVideo.style.cssText = "position:fixed;left:0;top:0;width:640px;height:360px;opacity:0.02;pointer-events:none;z-index:-1;";
       document.body.appendChild(screenVideo);
     }
     screenVideo.srcObject = screenStream;
@@ -319,35 +319,42 @@ async function ensureScreenShare() {
   }
 }
 
+function waitForVideoFrame(video) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("화면 공유가 아직 준비되지 않았습니다.")), 2500);
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    if (typeof video.requestVideoFrameCallback === "function") {
+      video.requestVideoFrameCallback(() => done());
+      return;
+    }
+    video.addEventListener("timeupdate", function onTime() {
+      video.removeEventListener("timeupdate", onTime);
+      done();
+    });
+  });
+}
+
 async function grabScreenBlob() {
   if (!isScreenShareLive()) {
     throw new Error("화면 공유가 필요합니다. 상품 등록이나 수동 캡처를 다시 눌러 화면을 고르세요.");
   }
+  if (screenVideo) {
+    try { await screenVideo.play(); } catch {}
+    await waitForVideoFrame(screenVideo);
+  }
+  if (!screenVideo?.videoWidth) throw new Error("화면 공유가 아직 준비되지 않았습니다.");
   const canvas = document.createElement("canvas");
-  let width = 0;
-  let height = 0;
-  let draw;
-  const track = screenStream.getVideoTracks()[0];
-  if (typeof ImageCapture !== "undefined" && track) {
-    try {
-      const bitmap = await new ImageCapture(track).grabFrame();
-      width = bitmap.width;
-      height = bitmap.height;
-      draw = (ctx, dw, dh) => ctx.drawImage(bitmap, 0, 0, dw, dh);
-    } catch {}
-  }
-  if (!draw) {
-    if (!screenVideo?.videoWidth) throw new Error("화면 공유가 아직 준비되지 않았습니다.");
-    width = screenVideo.videoWidth;
-    height = screenVideo.videoHeight;
-    draw = (ctx, dw, dh) => ctx.drawImage(screenVideo, 0, 0, dw, dh);
-  }
-  const scale = Math.min(1, 1600 / width);
+  const width = screenVideo.videoWidth;
+  const height = screenVideo.videoHeight;
+  const scale = Math.min(1, 1280 / width);
   canvas.width = Math.max(1, Math.round(width * scale));
   canvas.height = Math.max(1, Math.round(height * scale));
-  draw(canvas.getContext("2d"), canvas.width, canvas.height);
+  canvas.getContext("2d").drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("캡처에 실패했습니다."))), "image/jpeg", 0.72);
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("캡처에 실패했습니다."))), "image/jpeg", 0.62);
   });
 }
 
