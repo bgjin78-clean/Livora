@@ -1,11 +1,23 @@
 const config = require("../config");
 
+function chatText(data) {
+  const comment = data?.comment;
+  if (typeof comment === "string" && comment.trim()) return comment.trim();
+  const content = data?.content;
+  if (typeof content === "string" && content.trim()) return content.trim();
+  if (content && typeof content === "object") {
+    const text = content.text || content.defaultPattern || content.default_pattern || "";
+    if (String(text).trim()) return String(text).trim();
+  }
+  return "";
+}
+
 function normalizeEvent(data) {
-  const user = data.user || {};
+  const user = data?.user || {};
   return {
-    uid: String(data.uniqueId || user.uniqueId || user.userId || ""),
-    nick: String(data.nickname || user.nickname || user.uniqueId || ""),
-    msg: String(data.comment || "")
+    uid: String(data?.uniqueId || user.uniqueId || user.displayId || user.userId || user.id || ""),
+    nick: String(data?.nickname || user.nickname || user.nickName || user.displayId || user.uniqueId || ""),
+    msg: chatText(data)
   };
 }
 
