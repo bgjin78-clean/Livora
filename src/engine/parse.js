@@ -1,17 +1,29 @@
 const COLORS = {
-  "검정": "블랙", "검": "블랙", "블랙": "블랙",
-  "흰": "화이트", "흰색": "화이트", "화이트": "화이트",
-  "아이보리": "아이보리", "크림": "크림", "오트밀": "오트밀",
-  "베이지": "베이지", "배이지": "베이지", "뻬이지": "베이지", "배이쥐": "베이지", "베": "베이지",
-  "네이비": "네이비", "네": "네이비",
-  "블루": "블루", "파": "블루", "파랑": "블루", "소라": "소라",
-  "그레이": "그레이", "회": "그레이",
-  "차콜": "차콜", "먹색": "차콜",
+  "검정": "블랙", "검정색": "블랙", "검은": "블랙", "검은색": "블랙",
+  "까만": "블랙", "까만색": "블랙", "까망": "블랙", "까망색": "블랙",
+  "흑색": "블랙", "검": "블랙", "블랙": "블랙",
+  "흰": "화이트", "흰색": "화이트", "하얀": "화이트", "하얀색": "화이트",
+  "하양": "화이트", "하양색": "화이트", "백색": "화이트", "화이트": "화이트",
+  "아이보리": "아이보리", "아이보리색": "아이보리",
+  "크림": "크림", "크림색": "크림",
+  "오트밀": "오트밀", "오트밀색": "오트밀",
+  "베이지": "베이지", "베이지색": "베이지", "배이지": "베이지", "뻬이지": "베이지", "배이쥐": "베이지", "베": "베이지",
+  "네이비": "네이비", "네이비색": "네이비", "남색": "네이비", "네": "네이비",
+  "블루": "블루", "파란색": "블루", "파란": "블루", "파랑": "블루", "파랑색": "블루", "청색": "블루", "파": "블루",
+  "소라": "소라", "소라색": "소라",
+  "그레이": "그레이", "그레이색": "그레이", "회색": "그레이", "쥐색": "그레이", "회": "그레이",
+  "차콜": "차콜", "차콜색": "차콜", "챠콜": "차콜", "먹색": "차콜",
   "차폴": "차폴", "차": "차폴",
-  "핑크": "핑크", "카키": "카키", "브라운": "브라운",
-  "레드": "레드", "빨강": "레드",
+  "핑크": "핑크", "핑크색": "핑크", "분홍": "핑크", "분홍색": "핑크",
+  "카키": "카키", "카키색": "카키",
+  "브라운": "브라운", "브라운색": "브라운", "갈색": "브라운", "밤색": "브라운",
+  "레드": "레드", "빨간색": "레드", "빨간": "레드", "빨강": "레드", "빨강색": "레드", "적색": "레드", "붉은": "레드", "붉은색": "레드",
+  "노랑": "노랑", "노란색": "노랑", "노란": "노랑", "노랑색": "노랑", "황색": "노랑", "옐로우": "노랑",
+  "초록": "초록", "초록색": "초록", "녹색": "초록", "그린": "초록",
+  "보라": "보라", "보라색": "보라", "퍼플": "보라",
+  "주황": "주황", "주황색": "주황", "오렌지": "주황", "오렌지색": "주황",
   "연청": "연청", "중청": "중청", "진청": "진청",
-  "민트": "민트"
+  "민트": "민트", "민트색": "민트"
 };
 
 const SIZE_LIST = ["xs", "s", "m", "l", "xl", "xxl", "free", "f", "55", "66", "77", "88"];
@@ -78,6 +90,7 @@ const COLOR_SIZE_TRAILING_RE = new RegExp(
   `(${phrasePattern([...ORDER_PHRASES, "사이즈", "컬러", "색상", "색", "번", "요", "개", "장"])})`,
   "g"
 );
+const COLOR_LIST_JOINER_RE = /^(?:[,./+·•・，、]+|하고|이랑|이요|여요|요+|용|여|랑)+/u;
 const QUESTION_RE = /[?？]|문의|있나요|가능|되나요|될까요|얼마|가격|재고|배송|언제|어디|어떻게|어케|맞나요|괜찮나요|입어도|안와요|안오네|문자|끝났나요|끝나나요|끝났어요|끝났습니까|마감인가요|품절인가요|주문하나요|하는법|하는방법/u;
 const QUESTION_END_RE = /(되는건가여|되는건가요|되는건가용|건가여|건가요|건가용|건가유|건지요|건지|건가|인가요|인가여|일까요|을까요|될까요|될까|되나요|되나여|되는지요|되는지|되나|나요|나여|나용|나유|까요|까여|까용|인지요|인지|예요|에요|지요|지여|죠|가요|가여|가용|가유)\s*$/u;
 
@@ -129,10 +142,25 @@ const CANCEL_PHRASES = [
 ];
 const CANCEL_TAIL_PATTERN = "(?:취소해주세요|취소할께요|취소할게요|취소해줘|취소할게|취소할께|취소요|주문취소요|주문취소|취소|삭제해주세요|삭제해줘|삭제요|삭제|빼주세요|빼주세용|빼주시고|빼줘요|빼주라|빼줘|제외해주세요|제외해줘|제외|안할게요|안할께요|안살게요|안살께요|안할게|안할께|안살게|안살께|필요없어요|필요없어)";
 const FOLLOW_WORDS = [
+  "저희두주세요", "저희도주세요", "저희두주세용", "저희도주세용", "저희두주세여", "저희도주세여",
+  "저희두살게요", "저희도살게요", "저희두살께요", "저희도살께요",
+  "저희두요", "저희도요", "저희두용", "저희도용",
+  "저두주세요", "저도주세요", "나두주세요", "나도주세요",
+  "저두주세용", "저도주세용", "나두주세용", "나도주세용",
+  "저두주세여", "저도주세여", "나두주세여", "나도주세여",
+  "저두줘요", "저도줘요", "나두줘요", "나도줘요",
+  "저두살게요", "저도살게요", "나두살게요", "나도살게요",
+  "저두살께요", "저도살께요", "나두살께요", "나도살께요",
+  "저두사주세요", "저도사주세요", "나두사주세요", "나도사주세요",
+  "저두같은거요", "저도같은거요", "나두같은거요", "나도같은거요",
+  "저두그거요", "저도그거요", "나두그거요", "나도그거요",
   "저도주문요", "저두주문요", "나도주문요", "나두주문요",
   "저도주문", "저두주문", "나도주문", "나두주문",
-  "저두요", "저도요", "저요",
-  "나도요", "나두요",
+  "같이주세요", "같이주세용", "같이주세여",
+  "같은걸로요", "같은거요", "그걸로요", "그거요",
+  "저두요", "저도요", "나두요", "나도요", "저요",
+  "저두용", "저도용", "나두용", "나도용", "같이용", "같이요",
+  "저희두", "저희도", "저두", "저도", "나두", "나도",
   "주문요", "ㅈㅇ"
 ];
 
@@ -281,17 +309,30 @@ function parseFollowOrder(text) {
     .filter(Boolean)
     .sort((a, b) => b.length - a.length);
   for (const word of words) {
-    if (compact === word) return { qty: 1 };
-    if (!compact.startsWith(word)) continue;
-    const rest = compact.slice(word.length);
-    if (!rest) return { qty: 1 };
-    if (/^\d{1,3}(?:개|장|박스|상자|세트|셋트|벌)?$/.test(rest)) {
-      return { qty: extractFlexibleQty(rest, 1) };
-    }
-    if (hasOrderKeyword(rest)) {
-      return { qty: extractFlexibleQty(rest, 1) };
-    }
+    if (compact !== word && !compact.startsWith(word)) continue;
+    const qty = followRestQty(compact === word ? "" : compact.slice(word.length));
+    if (!qty) continue;
+    return { qty };
   }
+  return null;
+}
+
+function startsWithFollowWord(text) {
+  const compact = normalizeMatchText(text);
+  if (!compact) return false;
+  return FOLLOW_WORDS.some((word) => {
+    const needle = normalizeMatchText(word);
+    return Boolean(needle && compact.startsWith(needle));
+  });
+}
+
+function followRestQty(rest) {
+  let work = String(rest || "").replace(/(?:이요|여요|요|용|여)+$/u, "");
+  if (!work) return 1;
+  if (/^\d{1,3}(?:개|장|박스|상자|세트|셋트|벌)?$/.test(work)) return extractFlexibleQty(work, 1);
+  if (/^(?:한|하나|두|둘|세|셋|네|넷|다섯)(?:개|장)?$/.test(work)) return extractFlexibleQty(work, 1);
+  if (/^(?:같은거|같은걸로|같은상품|그거|그걸로|이거|이걸로|똑같이)$/.test(work)) return 1;
+  if (hasOrderKeyword(work) && !removePhrases(work, ORDER_PHRASES)) return extractFlexibleQty(work, 1);
   return null;
 }
 
@@ -354,8 +395,16 @@ function normalizeOptionToSize(option) {
   return SIZE_LIST.includes(normalized) ? normalized : "";
 }
 
+function canonicalColor(name) {
+  const compact = String(name || "").toLowerCase().replace(/\s+/g, "");
+  if (!compact) return "";
+  if (COLORS[compact]) return COLORS[compact];
+  if (compact.endsWith("색") && COLORS[compact.slice(0, -1)]) return COLORS[compact.slice(0, -1)];
+  return "";
+}
+
 function normalizeOptionToColor(option) {
-  return COLORS[option] || "";
+  return canonicalColor(option);
 }
 
 function getOptionAliases(opt) {
@@ -383,7 +432,7 @@ function getOptionAliases(opt) {
     const n = weight[1];
     add(`${n}kg`, `${n}키로`, `${n}킬로`, `${n}근`);
   }
-  const canonColor = COLORS[raw] || COLORS[opt] || (Object.values(COLORS).includes(String(opt || "")) ? opt : "");
+  const canonColor = canonicalColor(raw) || canonicalColor(opt);
   if (canonColor) {
     add(canonColor);
     for (const [alias, canon] of Object.entries(COLORS)) {
@@ -595,6 +644,44 @@ function stripCancelWords(msg) {
   return normalizeText(work);
 }
 
+const CHANGE_PHRASES = [
+  "변경해주세요", "변경해줘", "변경할게요", "변경할께요", "변경합니다", "변경요", "변경",
+  "바꿔주세요", "바꿔주세용", "바꿔주세여", "바꿔줘", "바꿀게요", "바꿀께요", "바꿔요", "바꿔",
+  "바꿀게", "바꿀께", "바꾸기",
+  "교체해주세요", "교체해줘", "교체요", "교체",
+  "수정해주세요", "수정해줘", "수정요", "수정"
+];
+
+function isChangeIntent(msg) {
+  const text = String(msg || "");
+  if (/->|→/.test(text)) return true;
+  const compact = normalizeCompact(text);
+  if (!compact) return false;
+  return CHANGE_PHRASES.some((phrase) => compact.includes(phrase));
+}
+
+function revisionBody(msg) {
+  let work = normalizeText(msg);
+  const arrow = work.match(/^(.*?)\s*(?:->|→)\s*(.+)$/u);
+  if (arrow) work = normalizeText(arrow[2]);
+  for (const phrase of CHANGE_PHRASES.slice().sort((a, b) => b.length - a.length)) {
+    work = work.split(phrase).join(" ");
+  }
+  work = normalizeText(work).replace(/(?:으로|로)\s*$/u, "");
+  const pivot = work.match(/^(?:.*?)(?:을|를)\s*(.+)$/u);
+  if (pivot?.[1]) work = normalizeText(pivot[1]).replace(/(?:으로|로)\s*$/u, "");
+  return normalizeText(work);
+}
+
+function parseBareRevisionQty(text) {
+  const compact = normalizeCompact(text).replace(/개|장|세트|셋트|벌/g, "");
+  if (/^\d{1,3}$/.test(compact)) {
+    const qty = Number(compact);
+    return qty > 0 ? qty : null;
+  }
+  return ({ 한: 1, 하나: 1, 두: 2, 둘: 2, 세: 3, 셋: 3, 네: 4, 넷: 4 })[compact] || null;
+}
+
 function parseQtyChangeMessage(text) {
   const compact = normalizeCompact(text);
   if (!compact) return null;
@@ -638,7 +725,7 @@ function takeAliasFromStart(work, map, skip) {
 function parseColorSizeQtyList(text, { allowBareNumber = false, allowKeywordOnly = false } = {}) {
   const raw = normalizeText(text);
   if (!raw) return null;
-  let work = normalizeCompact(raw).replace(/[~!.,?？♡♥❤]/g, "");
+  let work = normalizeCompact(raw).replace(/[~!.,?？♡♥❤，、]/g, "");
   if (!work) return null;
 
   if (allowBareNumber && /^\d+$/.test(work)) {
@@ -647,7 +734,7 @@ function parseColorSizeQtyList(text, { allowBareNumber = false, allowKeywordOnly
 
   const items = [];
   while (work) {
-    work = work.replace(/^[,./]+/, "");
+    work = work.replace(COLOR_LIST_JOINER_RE, "");
     if (!work) break;
     const colorHit = takeAliasFromStart(work, COLORS, AMBIGUOUS_COLORS);
     if (colorHit) work = colorHit.rest;
@@ -722,6 +809,7 @@ module.exports = {
   isNoiseChat,
   isFollowPhrase,
   parseFollowOrder,
+  startsWithFollowWord,
   isOrderSuffixOnly,
   hasOrderIntent,
   leftoverAfterOrderWords,
@@ -750,6 +838,9 @@ module.exports = {
   isCancelIntent,
   parseCancelQty,
   stripCancelWords,
+  isChangeIntent,
+  revisionBody,
+  parseBareRevisionQty,
   parseQtyChangeMessage,
   isSafeImmediateQty,
   parseColorSizeQty,

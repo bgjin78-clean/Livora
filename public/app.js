@@ -1,3 +1,5 @@
+const DESK_PLATFORMS = ["tiktok", "youtube"];
+
 const state = {
   user: null,
   session: null,
@@ -5,7 +7,8 @@ const state = {
   channels: [],
   chats: [],
   orders: [],
-  products: [],
+  productsByPlatform: { tiktok: [], youtube: [] },
+  qtyByPlatform: { tiktok: null, youtube: null },
   reviews: [],
   outputs: [],
   mailReady: false,
@@ -13,8 +16,10 @@ const state = {
   editingUserId: null,
   adminUsers: [],
   lastSession: null,
+  lastByPlatform: { tiktok: null, youtube: null },
+  activePlatform: "tiktok",
   adminStatsTimer: null,
-  screenCapture: localStorage.getItem("livoraScreenCapture") !== "0",
+  screenCapture: true,
   labelPrint: localStorage.getItem("livoraLabelPrint") === "1"
 };
 
@@ -64,12 +69,21 @@ function setPage(page) {
   if (showAdminStats) loadAdminStats();
 }
 
-function selectedPlatform() {
-  return $("platformSelect").value;
+function deskLane(platform) {
+  return document.querySelector(`.platform-lane[data-platform="${platform}"]`);
 }
 
-function platformBody(extra = {}) {
-  return { platform: selectedPlatform(), ...extra };
+function deskEl(platform, role) {
+  return deskLane(platform)?.querySelector(`[data-role="${role}"]`) || null;
+}
+
+function platformBody(platform, extra = {}) {
+  return { platform, ...extra };
+}
+
+function sessionForPlatform(platform) {
+  return liveSessions().find((row) => row.platform === platform)
+    || (state.lastByPlatform[platform]?.id ? state.lastByPlatform[platform] : null);
 }
 
 function upsertSession(session) {
@@ -103,36 +117,33 @@ function escapeAttr(value) {
 }
 
 function renderChannels() {
-  const platforms = [...new Set(state.channels.map((c) => c.platform))];
-  const prev = $("platformSelect").value;
-  $("platformSelect").innerHTML = platforms.length
-    ? platforms.map((p) => `<option value="${escapeAttr(p)}">${platformLabel(p)}</option>`).join("")
-    : `<option value="">플랫폼 없음</option>`;
-  if (prev && platforms.includes(prev)) $("platformSelect").value = prev;
   renderChannelIds();
 }
 
 function renderChannelIds() {
-  const platform = $("platformSelect").value;
   const isAdmin = state.user?.role === "admin";
-  const list = state.channels.filter((c) => c.platform === platform);
-  const seen = new Set();
-  const unique = [];
-  for (const c of list) {
-    if (seen.has(c.channel_id)) continue;
-    seen.add(c.channel_id);
-    unique.push(c);
+  for (const platform of DESK_PLATFORMS) {
+    const select = deskEl(platform, "channel");
+    if (!select) continue;
+    const list = state.channels.filter((c) => c.platform === platform);
+    const seen = new Set();
+    const unique = [];
+    for (const c of list) {
+      if (seen.has(c.channel_id)) continue;
+      seen.add(c.channel_id);
+      unique.push(c);
+    }
+    const prev = select.value;
+    select.innerHTML = unique.length
+      ? unique.map((c) => {
+        const owner = c.username || c.user_name || "";
+        const title = c.label || c.channel_id;
+        const label = isAdmin && owner ? `${title} · ${owner}` : title;
+        return `<option value="${escapeAttr(c.channel_id)}">${escapeAttr(label)}</option>`;
+      }).join("")
+      : `<option value="">승인된 ID 없음</option>`;
+    if (prev && unique.some((c) => c.channel_id === prev)) select.value = prev;
   }
-  const prev = $("channelSelect").value;
-  $("channelSelect").innerHTML = unique.length
-    ? unique.map((c) => {
-      const owner = c.username || c.user_name || "";
-      const title = c.label || c.channel_id;
-      const label = isAdmin && owner ? `${title} · ${owner}` : title;
-      return `<option value="${escapeAttr(c.channel_id)}">${escapeAttr(label)}</option>`;
-    }).join("")
-    : `<option value="">승인된 ID 없음</option>`;
-  if (prev && unique.some((c) => c.channel_id === prev)) $("channelSelect").value = prev;
 
   const tiktok = [...new Set(state.channels.filter((c) => c.platform === "tiktok").map((c) => c.channel_id))];
   const youtube = [...new Set(state.channels.filter((c) => c.platform === "youtube").map((c) => c.channel_id))];
@@ -142,7 +153,7 @@ function renderChannelIds() {
   if (bits.length) {
     $("channelIdsHint").textContent = `${isAdmin
       ? `승인된 전체 채널: ${bits.join(" · ")}`
-      : `이 계정 채널: ${bits.join(" · ")}`} · 틱톡과 유튜브를 동시에 켤 수 있습니다. 상품 등록은 지금 고른 플랫폼에만 적용됩니다.`;
+      : `이 계정 채널: ${bits.join(" · ")}`} · 왼쪽 틱톡, 오른쪽 유튜브를 각각 켤 수 있습니다.`;
   } else {
     $("channelIdsHint").textContent = isAdmin
       ? "승인된 틱톡/유튜브 채널이 없습니다."
@@ -151,11 +162,18 @@ function renderChannelIds() {
 }
 
 function renderChats() {
-  $("chatList").innerHTML = state.chats.slice(-80).reverse().map((c) => `
-    <div class="chat-row ${c.is_order || c.isOrder ? "order" : ""} ${c.kind === "cancel" ? "cancel" : ""}">
-      ${platformTag(c.platform)}<b>${c.nick || ""}</b>${c.msg || ""}
-    </div>
-  `).join("");
+  for (const platform of DESK_PLATFORMS) {
+    const el = deskEl(platform, "chats");
+    if (!el) continue;
+    const rows = state.chats.filter((c) => c.platform === platform).slice(-80).reverse();
+    el.innerHTML = rows.length
+      ? rows.map((c) => `
+        <div class="chat-row ${c.is_order || c.isOrder ? "order" : ""} ${c.kind === "cancel" ? "cancel" : ""}">
+          <b>${c.nick || ""}</b>${c.msg || ""}
+        </div>
+      `).join("")
+      : `<div class="chat-row">채팅이 없습니다.</div>`;
+  }
 }
 
 function renderReviews() {
@@ -173,16 +191,19 @@ function renderReviews() {
 }
 
 function renderOutputs() {
-  const el = $("outputList");
-  if (!el) return;
-  el.innerHTML = (state.outputs || []).length
-    ? state.outputs.slice(0, 200).map((row) => `
-        <div class="order-row output-row">
-          <b>${escapeAttr(row.nick || "")}</b>
-          ${escapeAttr(row.product || "")} ${escapeAttr(row.option || "")}
-        </div>
-      `).join("")
-    : `<div class="order-row">주문이 들어오면 수량만큼 여기에 출력됩니다.</div>`;
+  for (const platform of DESK_PLATFORMS) {
+    const el = deskEl(platform, "outputs");
+    if (!el) continue;
+    const rows = (state.outputs || []).filter((row) => row.platform === platform).slice(0, 200);
+    el.innerHTML = rows.length
+      ? rows.map((row) => `
+          <div class="order-row output-row">
+            <b>${escapeAttr(row.nick || "")}</b>
+            ${escapeAttr(row.product || "")} ${escapeAttr(row.option || "")}
+          </div>
+        `).join("")
+      : `<div class="order-row">주문이 들어오면 수량만큼 여기에 출력됩니다.</div>`;
+  }
 }
 
 function appendOutputLines(payload) {
@@ -192,7 +213,8 @@ function appendOutputLines(payload) {
   const lines = Array.from({ length: count }, () => ({
     nick: payload.nickname || payload.nick || "",
     product: payload.product || "",
-    option
+    option,
+    platform: payload.platform || ""
   }));
   state.outputs = lines.concat(state.outputs).slice(0, 200);
   renderOutputs();
@@ -225,24 +247,16 @@ function orderShotName(o) {
   return o.shotFile || o.shot_path || "";
 }
 
-function orderShotHref(file) {
+function orderShotHref(file, sessionId) {
   if (!canUseShots()) return "";
-  const session = exportSession();
-  if (!session?.id || !file) return "";
-  return `/api/sessions/${session.id}/shots/${encodeURIComponent(file)}`;
+  const id = sessionId || exportSession()?.id;
+  if (!id || !file) return "";
+  return `/api/sessions/${id}/shots/${encodeURIComponent(file)}`;
 }
 
-function setShotButton() {
-  if (!$("shotBtn")) return;
-  const on = canUseShots() && state.screenCapture !== false;
-  $("shotBtn").textContent = on ? "화면캡처 ON" : "화면캡처";
-  $("shotBtn").classList.toggle("on", on);
-}
-
-const SHOT_HINT = "화면캡처를 켜면 화면 공유 창이 뜹니다. 전체 화면 또는 라이브 창을 고르세요. 주문이 들어오면 그 화면을 저장합니다. 방송이 끝나도 24시간은 다시 볼 수 있고, 그 다음에 서버에서 지웁니다.";
+const SHOT_HINT = "상품을 등록하면 그 화면을 바로 저장합니다. 처음에는 화면 공유 창이 뜨니 전체 화면 또는 라이브 창을 고르세요. 찍히지 않았거나 다시 찍으려면 수동 캡처를 누르세요. 방송이 끝나도 24시간은 다시 볼 수 있고, 그 다음에 서버에서 지웁니다.";
 let screenStream = null;
 let screenVideo = null;
-let shotUploadQueue = Promise.resolve();
 
 function setShotHint(text) {
   if ($("shotHint")) $("shotHint").textContent = text || SHOT_HINT;
@@ -260,14 +274,7 @@ function stopScreenShare() {
 
 function onShareEnded() {
   stopScreenShare();
-  if (state.screenCapture === false) return;
-  state.screenCapture = false;
-  localStorage.setItem("livoraScreenCapture", "0");
-  setShotButton();
-  setShotHint("화면 공유가 끊어졌습니다. 화면캡처를 다시 켜 주세요.");
-  if (state.session) {
-    api("/api/sessions/screen-capture", { method: "POST", body: platformBody({ enabled: false }) }).catch(() => {});
-  }
+  setShotHint("화면 공유가 끊어졌습니다. 다음 상품 등록이나 수동 캡처 때 화면을 다시 고르세요.");
 }
 
 async function ensureScreenShare() {
@@ -301,12 +308,12 @@ async function ensureScreenShare() {
         };
       });
     }
-    setShotHint("화면 공유 중입니다. 주문이 들어오면 이 화면을 저장합니다.");
+    setShotHint("화면 공유 중입니다. 상품을 등록하면 이 화면을 바로 저장합니다.");
     return true;
   } catch (err) {
     stopScreenShare();
     if (err?.name === "NotAllowedError" || err?.name === "NotFoundError") {
-      throw new Error("화면 공유를 허용해야 주문 때 캡처됩니다. 전체 화면 또는 라이브 창을 고르세요.");
+      throw new Error("화면 공유를 허용해야 상품 화면이 저장됩니다. 전체 화면 또는 라이브 창을 고르세요.");
     }
     throw err;
   }
@@ -314,7 +321,7 @@ async function ensureScreenShare() {
 
 async function grabScreenBlob() {
   if (!isScreenShareLive()) {
-    throw new Error("화면 공유가 꺼져 있습니다. 화면캡처를 다시 켜 주세요.");
+    throw new Error("화면 공유가 필요합니다. 상품 등록이나 수동 캡처를 다시 눌러 화면을 고르세요.");
   }
   const canvas = document.createElement("canvas");
   let width = 0;
@@ -356,45 +363,6 @@ function blobToDataUrl(blob) {
 async function captureScreenDataUrl() {
   const blob = await grabScreenBlob();
   return blobToDataUrl(blob);
-}
-
-async function uploadOrderShot(order) {
-  if (!canUseShots() || state.screenCapture === false) return;
-  if (!isScreenShareLive()) {
-    setShotHint("화면 공유가 꺼져 있어 주문 화면을 찍지 못했습니다. 화면캡처를 다시 켜 주세요.");
-    return;
-  }
-  const image = await captureScreenDataUrl();
-  const data = await api("/api/sessions/order-shot", {
-    method: "POST",
-    body: platformBody({
-      sessionId: order.sessionId,
-      image,
-      uid: order.uid,
-      nickname: order.nick || order.nickname,
-      product: order.product,
-      option: order.option_name || order.option,
-      message: order.msg || order.message
-    })
-  });
-  if (!data?.shotFile) return;
-  const idx = state.orders.findIndex((row) =>
-    row.uid === order.uid &&
-    row.product === order.product &&
-    (row.option_name || row.option || "") === (order.option_name || order.option || "") &&
-    (!order.sessionId || !row.sessionId || row.sessionId === order.sessionId)
-  );
-  if (idx >= 0) {
-    state.orders[idx].shotFile = data.shotFile;
-    state.orders[idx].shot_path = data.shotFile;
-    renderOrders();
-  }
-}
-
-function enqueueOrderShot(order) {
-  shotUploadQueue = shotUploadQueue.then(() => uploadOrderShot(order)).catch((err) => {
-    setShotHint(err.message || "주문 화면 캡처에 실패했습니다.");
-  });
 }
 
 function optionText(order) {
@@ -505,48 +473,63 @@ function enqueueLabel(order, copies) {
   if (state.labelPrint) flushLabelQueue();
 }
 
-function renderOrders() {
-  const all = state.orders;
-  const rows = state.guessOnly ? all.filter(isInferredOrder) : all;
-  $("liveOrders").innerHTML = all.slice(0, 80).map((o) => {
-    const inferred = isInferredOrder(o);
-    const src = matchSourceLabel(o.matchSource || o.match_source);
-    const chat = o.msg || o.message || "";
-    const shot = orderShotName(o);
-    const href = orderShotHref(shot);
-    return `
-    <div class="order-row ${inferred ? "guess" : ""}">
-      ${platformTag(o.platform)}
+function isShortage(o) {
+  return (o?.stockStatus || o?.stock_status || "") === "shortage";
+}
+
+function orderCard(o) {
+  const inferred = isInferredOrder(o);
+  const shortage = isShortage(o);
+  const src = matchSourceLabel(o.matchSource || o.match_source);
+  const chat = o.msg || o.message || "";
+  const shot = orderShotName(o);
+  const href = orderShotHref(shot, o.sessionId);
+  return `
+    <div class="order-row ${inferred ? "guess" : ""} ${shortage ? "shortage" : ""}">
       <b>${o.nick || o.nickname || ""}</b>
-      ${o.product || ""} ${o.option_name || o.option || ""} · ${o.qty}개 · ${(o.amount || 0).toLocaleString("ko-KR")}원
+      ${o.product || ""} ${o.option_name || o.option || ""} · ${o.qty}개 · ${shortage ? "재고부족" : `${(o.amount || 0).toLocaleString("ko-KR")}원`}
+      ${shortage ? `<span class="match-tag shortage">재고부족</span>` : ""}
       ${src ? `<span class="match-tag ${inferred ? "guess" : ""}">${inferred ? "추정 · " : ""}${src}</span>` : ""}
       ${href ? `<a class="shot-link" href="${href}" target="_blank" rel="noopener">캡처</a>` : ""}
       <button type="button" class="label-reprint" data-label-nick="${escapeAttr(o.nick || o.nickname || "")}" data-label-product="${escapeAttr(o.product || "")}" data-label-option="${escapeAttr(optionText(o))}" data-label-qty="${labelCopies(o.qty) || 1}">라벨</button>
       ${chat ? `<small>채팅: ${chat}</small>` : ""}
     </div>`;
-  }).join("");
+}
+
+function renderOrders() {
+  const all = state.orders;
+  const rows = state.guessOnly ? all.filter(isInferredOrder) : all;
+  for (const platform of DESK_PLATFORMS) {
+    const el = deskEl(platform, "orders");
+    if (!el) continue;
+    const list = all.filter((o) => o.platform === platform).slice(0, 80);
+    el.innerHTML = list.length
+      ? list.map(orderCard).join("")
+      : `<div class="order-row">접수된 주문이 없습니다.</div>`;
+  }
   $("orderTable").innerHTML = rows.map((o) => {
     const inferred = isInferredOrder(o);
+    const shortage = isShortage(o);
     const src = matchSourceLabel(o.matchSource || o.match_source) || "-";
     const shot = orderShotName(o);
-    const href = orderShotHref(shot);
     return `
-    <tr>
-      <td>${o.nick || o.nickname || ""}</td>
+    <tr class="${shortage ? "shortage" : ""}">
+      <td>${platformTag(o.platform)}${o.nick || o.nickname || ""}</td>
       <td>${o.product || ""}</td>
       <td>${o.option_name || o.option || ""}</td>
       <td>${o.qty}</td>
-      <td>${(o.amount || 0).toLocaleString("ko-KR")}원</td>
-      <td>${inferred ? `추정 · ${src}` : src}</td>
+      <td>${shortage ? "재고부족" : `${(o.amount || 0).toLocaleString("ko-KR")}원`}</td>
+      <td>${shortage ? "재고부족" : inferred ? `추정 · ${src}` : src}</td>
       <td>${o.msg || o.message || ""}</td>
-      <td class="shot-col">${href ? `<a class="shot-link" href="${href}" target="_blank" rel="noopener">보기</a>` : "-"}</td>
+      <td class="shot-col">${orderShotHref(shot, o.sessionId) ? `<a class="shot-link" href="${orderShotHref(shot, o.sessionId)}" target="_blank" rel="noopener">보기</a>` : "-"}</td>
       <td><button type="button" class="label-reprint" data-label-nick="${escapeAttr(o.nick || o.nickname || "")}" data-label-product="${escapeAttr(o.product || "")}" data-label-option="${escapeAttr(optionText(o))}" data-label-qty="${labelCopies(o.qty) || 1}">라벨</button></td>
     </tr>`;
   }).join("");
-  const buyers = new Set(all.map((o) => o.uid || o.nick)).size;
+  const confirmed = all.filter((o) => !isShortage(o));
+  const buyers = new Set(confirmed.map((o) => o.uid || o.nick)).size;
   $("statBuyers").textContent = buyers;
-  $("statOrders").textContent = all.length;
-  $("statAmount").textContent = all.reduce((s, o) => s + Number(o.amount || 0), 0).toLocaleString("ko-KR");
+  $("statOrders").textContent = confirmed.length;
+  $("statAmount").textContent = confirmed.reduce((s, o) => s + Number(o.amount || 0), 0).toLocaleString("ko-KR");
 }
 
 function exportSession() {
@@ -554,7 +537,9 @@ function exportSession() {
 }
 
 function setLastSession(session) {
-  if (session?.id) state.lastSession = session;
+  if (!session?.id) return;
+  state.lastSession = session;
+  if (session.platform) state.lastByPlatform[session.platform] = session;
 }
 
 function updateFilesHint() {
@@ -579,6 +564,13 @@ function setLiveBadge() {
   const live = lives.length > 0;
   $("liveBadge").textContent = live ? "수집중" : "대기";
   $("liveBadge").classList.toggle("live", live);
+  for (const platform of DESK_PLATFORMS) {
+    const el = deskEl(platform, "status");
+    const row = lives.find((item) => item.platform === platform);
+    if (!el) continue;
+    el.textContent = row?.error ? row.error : row ? `수집중 · ${row.channelId || row.channel_id || ""}` : "대기";
+    el.classList.toggle("live", Boolean(row) && !row.error);
+  }
   updateFilesHint();
 }
 
@@ -604,7 +596,8 @@ function connectWs() {
           const sameUser = String(o.uid || "") === String(p.uid || "");
           const sameProduct = (o.product || "") === (p.product || "");
           const sameOption = (o.option_name || o.option || "") === (p.option || "");
-          if (!sameUser || !sameProduct) return true;
+          const sameStatus = (o.stockStatus || o.stock_status || "") === (p.stockStatus || "");
+          if (!sameUser || !sameProduct || !sameStatus) return true;
           if (p.option) return !sameOption;
           return false;
         });
@@ -612,7 +605,8 @@ function connectWs() {
         const idx = state.orders.findIndex((o) =>
           String(o.uid || "") === String(p.uid || "") &&
           (o.product || "") === (p.product || "") &&
-          (o.option_name || o.option || "") === (p.option || "")
+          (o.option_name || o.option || "") === (p.option || "") &&
+          (o.stockStatus || o.stock_status || "") === (p.stockStatus || "")
         );
         if (idx >= 0) {
           state.orders[idx].qty = p.qty;
@@ -645,9 +639,14 @@ function connectWs() {
         : [];
       renderChats();
     }
-    if (msg.type === "stock-block") {
+    if (msg.type === "stock-block" || msg.type === "duplicate-order") {
       const p = msg.payload || {};
-      $("currentProduct").textContent = `재고 초과: ${p.nickname || ""} / ${p.product || ""} / 남은 ${p.remain ?? 0}개`;
+      const current = deskEl(p.platform, "current");
+      if (current) {
+        current.textContent = msg.type === "duplicate-order"
+          ? `중복 주문: ${p.nickname || ""} / ${p.product || ""} ${p.option || ""}`.trim()
+          : `재고부족: ${p.nickname || ""} / ${p.product || ""} ${p.option || ""} ${p.shortage || ""}개`.trim();
+      }
     }
     if (msg.type === "order") {
       const incoming = {
@@ -664,14 +663,16 @@ function connectWs() {
         inferred: msg.payload.inferred,
         shotFile: msg.payload.shotFile || "",
         platform: msg.payload.platform,
-        sessionId: msg.payload.sessionId
+        sessionId: msg.payload.sessionId,
+        stockStatus: msg.payload.stockStatus || ""
       };
-      if (state.labelPrint) enqueueLabel(msg.payload, msg.payload.printQty ?? incoming.qty);
+      if (state.labelPrint && incoming.stockStatus !== "shortage") enqueueLabel(msg.payload, msg.payload.printQty ?? incoming.qty);
       appendOutputLines(msg.payload);
       const idx = state.orders.findIndex((o) =>
         o.uid === incoming.uid &&
         o.product === incoming.product &&
         (o.option_name || "") === (incoming.option_name || "") &&
+        (o.stockStatus || o.stock_status || "") === (incoming.stockStatus || "") &&
         (!incoming.sessionId || o.sessionId === incoming.sessionId)
       );
       if (idx >= 0) {
@@ -683,9 +684,6 @@ function connectWs() {
         state.orders.unshift(incoming);
       }
       renderOrders();
-      if (canUseShots() && state.screenCapture !== false && msg.payload.captureScreen !== false) {
-        enqueueOrderShot(incoming);
-      }
     }
     if (msg.type === "order-shot") {
       const p = msg.payload || {};
@@ -702,7 +700,7 @@ function connectWs() {
       }
     }
     if (msg.type === "shot-status" && msg.payload && !msg.payload.ok) {
-      setShotHint(msg.payload.error || "화면 캡처에 실패했습니다. 화면캡처를 다시 켜 주세요.");
+      setShotHint(msg.payload.error || "화면 캡처에 실패했습니다. 수동 캡처로 다시 찍을 수 있습니다.");
     }
     if (msg.type === "status") {
       if (msg.payload.platform) {
@@ -712,18 +710,20 @@ function connectWs() {
       setLiveBadge();
     }
     if (msg.type === "product") {
-      if (msg.payload.platform && msg.payload.platform !== selectedPlatform()) return;
-      upsertProduct(msg.payload);
-      setCurrentProduct(msg.payload, msg.payload.qtyMode);
-      if (msg.payload.qtyMode?.enabled) $("qtyBtn").textContent = "이거모드 ON";
+      const platform = msg.payload.platform;
+      if (!platform) return;
+      upsertProduct(platform, msg.payload);
+      setCurrentProduct(platform, msg.payload, msg.payload.qtyMode);
     }
     if (msg.type === "product-removed") {
-      if (msg.payload.platform && msg.payload.platform !== selectedPlatform()) return;
-      applyProductState(msg.payload.products, msg.payload.qtyMode);
+      const platform = msg.payload.platform;
+      if (!platform) return;
+      applyProductState(platform, msg.payload.products, msg.payload.qtyMode);
     }
     if (msg.type === "products-reset") {
-      if (msg.payload.platform && msg.payload.platform !== selectedPlatform()) return;
-      applyProductState([], msg.payload?.qtyMode);
+      const platform = msg.payload.platform;
+      if (!platform) return;
+      applyProductState(platform, [], msg.payload?.qtyMode);
     }
   };
 }
@@ -743,33 +743,33 @@ async function bootApp() {
   $("adminNavWrap").classList.toggle("hidden", !isAdmin);
   $("adminOverview").classList.add("hidden");
   renderChannels();
-  if (state.session?.platform) $("platformSelect").value = state.session.platform;
-  renderChannelIds();
   setLiveBadge();
-  setShotButton();
   setLabelButton();
-  if (canUseShots() && state.screenCapture !== false && !isScreenShareLive()) {
-    setShotHint("화면캡처가 켜져 있습니다. 수집 시작을 누르면 공유할 화면을 고릅니다. 이미 수집 중이면 화면캡처를 한 번 껐다 켜 주세요.");
-  }
+  if (canUseShots() && !isScreenShareLive()) setShotHint();
   if (liveSessions().length || state.session) {
-    const cur = await api(`/api/sessions/current${selectedPlatform() ? `?platform=${encodeURIComponent(selectedPlatform())}` : ""}`);
+    const cur = await api("/api/sessions/current");
     state.sessions = cur.sessions || state.sessions;
     state.session = cur.session || state.session;
+    state.sessions.forEach(setLastSession);
+    setLastSession(data.session || data.lastSession || cur.lastSession);
     state.chats = cur.chats || [];
     state.orders = cur.orders || [];
-    state.reviews = cur.reviews || cur.session?.snapshot?.reviews || [];
-    if (cur.session?.screenCapture != null) {
-      state.screenCapture = cur.session.screenCapture;
-      setShotButton();
-    }
+    state.reviews = cur.reviews || [];
     renderChats();
     renderOrders();
     renderReviews();
     renderOutputs();
-    const snap = cur.session?.snapshot;
-    state.products = snap?.products || cur.products || [];
-    if (snap?.qtyMode?.product) setCurrentProduct(snap.products?.find((p) => (p.product || p.number) === snap.qtyMode.product) || snap.products?.[0], snap.qtyMode);
-    else renderProductHistory();
+    for (const session of state.sessions) {
+      const snap = session.snapshot;
+      if (!snap || !session.platform) continue;
+      applyProductState(session.platform, snap.products || [], snap.qtyMode);
+    }
+    setLiveBadge();
+  } else {
+    renderChats();
+    renderOrders();
+    renderOutputs();
+    for (const platform of DESK_PLATFORMS) renderProductHistory(platform, null);
   }
   connectWs();
   show("app");
@@ -960,7 +960,7 @@ async function loadSellerData() {
     : `채널: ${channels || "없음"} · 아직 수집한 방송이 없습니다.`;
   $("sellerOrderList").innerHTML = (data.orders || []).length
     ? data.orders.slice(0, 80).map((o) => `
-        <div class="order-row"><b>${escapeAttr(o.nick || "")}</b>${escapeAttr(o.product || "")} ${escapeAttr(o.option_name || o.color || "")} ${o.qty || 0}개</div>
+        <div class="order-row ${isShortage(o) ? "shortage" : ""}"><b>${escapeAttr(o.nick || "")}</b>${escapeAttr(o.product || "")} ${escapeAttr(o.option_name || o.color || "")} ${o.qty || 0}개${isShortage(o) ? " · 재고부족" : ""}</div>
       `).join("")
     : `<div class="order-row">주문이 없습니다.</div>`;
   $("sellerChatList").innerHTML = (data.chats || []).length
@@ -1015,52 +1015,25 @@ document.querySelectorAll(".admin-tab-btn").forEach((btn) => {
   btn.onclick = () => setAdminTab(btn.dataset.adminTab);
 });
 
-$("platformSelect").onchange = async () => {
-  renderChannelIds();
-  const live = liveSessions().find((row) => row.platform === selectedPlatform());
-  state.session = live || state.session;
-  if (!live) {
-    applyProductState([], null);
-    return;
-  }
-  const snap = live.snapshot;
-  state.products = snap?.products || [];
-  if (snap?.qtyMode?.product) setCurrentProduct(snap.products?.find((p) => (p.product || p.number) === snap.qtyMode.product) || snap.products?.[0], snap.qtyMode);
-  else applyProductState(state.products, snap?.qtyMode);
-};
-
-$("startBtn").onclick = async () => {
-  const platform = $("platformSelect").value;
-  const channelId = $("channelSelect").value;
-  if (!platform || !channelId) return alert("승인된 채널이 없습니다.");
+async function startPlatform(platform) {
+  const channelId = deskEl(platform, "channel")?.value || "";
+  if (!channelId) return alert(`${platformLabel(platform)} 승인 채널이 없습니다.`);
+  state.activePlatform = platform;
   try {
-    if (canUseShots() && state.screenCapture !== false) {
-      try {
-        await ensureScreenShare();
-      } catch (err) {
-        state.screenCapture = false;
-        localStorage.setItem("livoraScreenCapture", "0");
-        setShotButton();
-        setShotHint(err.message || "화면 공유를 허용해야 주문 때 캡처됩니다. 수집은 이어서 시작합니다.");
-      }
-    }
     $("liveBadge").textContent = "수집중";
     $("liveBadge").classList.add("live");
     const data = await api("/api/sessions/start", {
       method: "POST",
-      body: { platform, channelId, screenCapture: canUseShots() && state.screenCapture !== false }
+      body: { platform, channelId, screenCapture: canUseShots() }
     });
     state.sessions = data.sessions || [];
     upsertSession(data.session);
-    if (data.session?.screenCapture != null) state.screenCapture = data.session.screenCapture;
-    setShotButton();
     setLastSession(data.session);
     state.chats = state.chats.filter((c) => c.platform && c.platform !== platform);
     state.orders = state.orders.filter((o) => o.platform && o.platform !== platform);
     state.reviews = state.reviews.filter((r) => r.platform && r.platform !== platform);
-    state.outputs = [];
-    state.products = [];
-    applyProductState([], null);
+    state.outputs = state.outputs.filter((row) => row.platform !== platform);
+    applyProductState(platform, [], null);
     renderChats();
     renderOrders();
     renderReviews();
@@ -1070,10 +1043,9 @@ $("startBtn").onclick = async () => {
     setLiveBadge();
     alert(err.message);
   }
-};
+}
 
-$("stopBtn").onclick = async () => {
-  const platform = selectedPlatform();
+async function stopPlatform(platform) {
   const previousSessions = state.sessions.slice();
   state.sessions = state.sessions.filter((row) => row.platform !== platform);
   setLiveBadge();
@@ -1088,7 +1060,7 @@ $("stopBtn").onclick = async () => {
   }
   setLastSession(data.lastSession || data.session || state.session);
   state.sessions = data.sessions || [];
-  state.session = state.sessions.find((row) => row.platform === platform) || data.session || state.sessions[0] || null;
+  state.session = state.sessions[0] || data.session || null;
   setLiveBadge();
   const mail = data.mail || {};
   let mailText = "";
@@ -1098,7 +1070,7 @@ $("stopBtn").onclick = async () => {
   else if (mail.reason === "smtp") mailText = " 메일 서버 설정이 없어 파일만 저장했습니다.";
   $("filesHint").textContent = `${platformLabel(platform)} 종료 저장이 끝났습니다. 엑셀·정산서·채팅 파일을 받으세요.${mailText}`;
   if (mail.ok) alert(`${platformLabel(platform)} 종료. 메일을 보냈습니다.`);
-};
+}
 
 function productKey(p) {
   if (p?.key) return p.key;
@@ -1111,38 +1083,47 @@ function productKey(p) {
   return p?.product ? `P:${p.product}` : "";
 }
 
-function upsertProduct(reg) {
-  if (!reg) return;
+function upsertProduct(platform, reg) {
+  if (!platform || !reg) return;
+  const list = state.productsByPlatform[platform] || [];
   const key = productKey(reg);
-  const idx = state.products.findIndex((p) => productKey(p) === key);
-  if (idx >= 0) state.products[idx] = { ...state.products[idx], ...reg, key };
-  else state.products.unshift({ ...reg, key });
+  const idx = list.findIndex((p) => productKey(p) === key);
+  if (idx >= 0) list[idx] = { ...list[idx], ...reg, key };
+  else list.unshift({ ...reg, key });
+  state.productsByPlatform[platform] = list;
 }
 
-function applyProductState(products, qtyMode) {
-  if (Array.isArray(products)) state.products = products.map((p) => ({ ...p, key: productKey(p) }));
-  const current = qtyMode?.key
-    ? state.products.find((p) => productKey(p) === qtyMode.key)
-    : qtyMode?.product
-    ? state.products.find((p) => (p.product || p.number) === qtyMode.product)
+function applyProductState(platform, products, qtyMode) {
+  if (!platform) return;
+  if (Array.isArray(products)) {
+    state.productsByPlatform[platform] = products.map((p) => ({ ...p, key: productKey(p) }));
+  }
+  if (qtyMode !== undefined) state.qtyByPlatform[platform] = qtyMode;
+  const mode = state.qtyByPlatform[platform];
+  const list = state.productsByPlatform[platform] || [];
+  const current = mode?.key
+    ? list.find((p) => productKey(p) === mode.key)
+    : mode?.product
+    ? list.find((p) => (p.product || p.number) === mode.product)
     : null;
-  setCurrentProduct(current, qtyMode);
-  if (qtyMode) $("qtyBtn").textContent = qtyMode.enabled ? "이거모드 ON" : "이거모드";
+  setCurrentProduct(platform, current, mode);
 }
 
-function renderProductHistory(qtyMode) {
-  const el = $("productList");
+function renderProductHistory(platform, qtyMode) {
+  const el = deskEl(platform, "products");
   if (!el) return;
-  const current = qtyMode?.product || "";
+  const mode = qtyMode === undefined ? state.qtyByPlatform[platform] : qtyMode;
+  const current = mode?.product || "";
   const seen = new Set();
   const items = [];
-  for (const p of state.products) {
+  for (const p of state.productsByPlatform[platform] || []) {
     const key = productKey(p);
     const name = p.product || p.number || "";
     if (!name || seen.has(key || name)) continue;
     seen.add(key || name);
-    items.push({ ...p, key, name, current: (qtyMode?.key && key === qtyMode.key) || (!qtyMode?.key && name === current) });
+    items.push({ ...p, key, name, current: (mode?.key && key === mode.key) || (!mode?.key && name === current) });
   }
+  const sessionId = sessionForPlatform(platform)?.id || "";
   el.innerHTML = items.map((p) => {
     const extra = [
       p.sizes?.length ? p.sizes.join("/") : (p.options || []).join("/"),
@@ -1151,157 +1132,127 @@ function renderProductHistory(qtyMode) {
     ].filter(Boolean).join(" ");
     const shot = p.shotFile || p.shot_path || "";
     return `
-      <span class="product-chip ${p.current ? "current" : ""} ${shot ? "has-shot" : ""}" data-key="${escapeAttr(p.key)}" data-shot="${escapeAttr(shot)}" title="${shot ? "클릭하면 이 상품 캡처를 엽니다" : ""}">
+      <span class="product-chip ${p.current ? "current" : ""} ${shot ? "has-shot" : ""}" data-key="${escapeAttr(p.key)}" data-shot="${escapeAttr(shot)}" data-session="${escapeAttr(sessionId)}" title="${shot ? "클릭하면 이 상품 캡처를 엽니다" : ""}">
         ${escapeAttr(p.name)}${extra ? ` ${escapeAttr(extra)}` : ""}${p.current ? " · 현재" : ""}${shot ? " · 캡처" : ""}
-        <button type="button" data-remove="${p.key}">삭제</button>
+        <button type="button" data-remove="${escapeAttr(p.key)}">삭제</button>
       </span>`;
   }).join("");
 }
 
-function setCurrentProduct(reg, qtyMode) {
-  const product = reg?.displayName || qtyMode?.product;
+function setCurrentProduct(platform, reg, qtyMode) {
+  const current = deskEl(platform, "current");
+  const qtyBtn = deskEl(platform, "qtyBtn");
+  if (qtyMode !== undefined) state.qtyByPlatform[platform] = qtyMode;
+  const mode = state.qtyByPlatform[platform];
+  if (qtyBtn) qtyBtn.textContent = mode?.enabled ? "이거모드 ON" : "이거모드";
+  const product = reg?.displayName || mode?.product;
+  if (!current) return;
   if (!product) {
-    $("currentProduct").textContent = "현재 등록 상품 없음";
-    renderProductHistory(qtyMode);
+    current.textContent = "현재 등록 상품 없음";
+    renderProductHistory(platform, mode);
     return;
   }
-  const price = Number(reg?.price ?? qtyMode?.price ?? 0);
-  const stock = Number(reg?.stock ?? qtyMode?.stock ?? 0);
+  const price = Number(reg?.price ?? mode?.price ?? 0);
+  const stock = Number(reg?.stock ?? mode?.stock ?? 0);
   const bits = [product];
   const sizes = (reg?.sizes || []).join("/");
   const colors = (reg?.colors || []).join("/");
   if (sizes) bits.push(sizes);
   if (colors) bits.push(colors);
-  const defaultQty = Number(reg?.defaultQty ?? qtyMode?.defaultQty ?? 1);
+  const defaultQty = Number(reg?.defaultQty ?? mode?.defaultQty ?? 1);
   if (defaultQty > 1) bits.push(`수량 ${defaultQty}`);
   if (price) bits.push(`${price.toLocaleString("ko-KR")}원`);
   if (stock) bits.push(`재고 ${stock}`);
-  $("currentProduct").textContent = `현재상품: ${bits.join(" · ")}`;
-  renderProductHistory(qtyMode);
+  current.textContent = `현재상품: ${bits.join(" · ")}`;
+  renderProductHistory(platform, mode);
 }
 
-$("registerBtn").onclick = async () => {
-  const name = $("productName").value.trim();
-  const number = $("productNumber").value.trim();
-  const size = $("productSize").value.trim();
-  const color = $("productColor").value.trim();
-  const qty = $("productQty").value.trim();
-  const price = $("productPrice").value.trim();
-  const stock = $("productStock").value.trim();
+function laneField(platform, role) {
+  return deskEl(platform, role)?.value.trim() || "";
+}
+
+async function registerProduct(platform) {
+  const name = laneField(platform, "name");
+  const number = laneField(platform, "number");
+  const size = laneField(platform, "size");
+  const color = laneField(platform, "color");
+  const qty = laneField(platform, "qty");
+  const price = laneField(platform, "price");
+  const stock = laneField(platform, "stock");
   if (!name && !number && !size && !color && !qty && !price && !stock) return;
   try {
     let image = "";
-    if (canUseShots() && state.screenCapture !== false) {
+    if (canUseShots()) {
       try {
         if (!isScreenShareLive()) await ensureScreenShare();
         image = await captureScreenDataUrl();
       } catch (err) {
-        setShotHint(err.message || "상품 등록 화면을 찍지 못했습니다. 상품은 그대로 등록합니다.");
+        setShotHint(`${err.message || "상품 등록 화면을 찍지 못했습니다."} 상품은 등록됩니다. 수동 캡처로 다시 찍을 수 있습니다.`);
       }
     }
     const data = await api("/api/sessions/products", {
       method: "POST",
-      body: platformBody({ name, number, size, color, qty, price, stock, image })
+      body: platformBody(platform, { name, number, size, color, qty, price, stock, image })
     });
     if (data.skipped) return;
-    ["productName", "productNumber", "productSize", "productColor", "productQty", "productPrice", "productStock"].forEach((id) => {
-      $(id).value = "";
+    ["name", "number", "size", "color", "qty", "price", "stock"].forEach((role) => {
+      const input = deskEl(platform, role);
+      if (input) input.value = "";
     });
-    upsertProduct(data.registration);
-    setCurrentProduct(data.registration, data.qtyMode);
-    if (data.qtyMode?.enabled) $("qtyBtn").textContent = "이거모드 ON";
+    upsertProduct(platform, data.registration);
+    setCurrentProduct(platform, data.registration, data.qtyMode);
     const shot = data.registration?.shotFile || "";
-    if (shot) setShotHint(`상품 등록 캡처 저장: ${shot}. 상품 이름을 누르면 열립니다.`);
+    if (shot) setShotHint(`${platformLabel(platform)} 상품 등록 캡처 저장: ${shot}. 상품 이름을 누르면 열립니다.`);
   } catch (err) {
     const message = String(err.message || "").trim();
     alert(message === "요청 실패" || /failed to fetch/i.test(message)
       ? "상품을 등록하지 못했습니다. 수집이 켜져 있는지 확인한 뒤 다시 등록하세요."
       : message);
   }
-};
+}
 
-["productName", "productNumber", "productSize", "productColor", "productQty", "productPrice", "productStock"].forEach((id) => {
-  $(id).addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("registerBtn").click();
-  });
-});
-
-$("productList").onclick = async (ev) => {
-  const removeKey = ev.target?.dataset?.remove;
-  if (!removeKey) {
-    const chip = ev.target.closest(".product-chip");
-    const shot = chip?.dataset?.shot;
-    if (shot && canUseShots()) {
-      const href = orderShotHref(shot);
-      if (href) window.open(href, "_blank", "noopener");
-      else alert("캡처 파일을 열 수 없습니다. 수집 화면에서 다시 열어 보세요.");
-    }
-    return;
-  }
-  const key = removeKey;
-  const chip = ev.target.closest(".product-chip");
-  const label = (chip?.textContent || "").replace("삭제", "").trim() || "이 상품";
+async function removeLaneProduct(platform, key, label) {
   if (!confirm(`${label}\n등록에서 삭제할까요? 이미 접수된 주문은 그대로 둡니다.`)) return;
   try {
     const data = await api("/api/sessions/products/remove", {
       method: "POST",
-      body: platformBody({ key })
+      body: platformBody(platform, { key })
     });
-    applyProductState(data.products, data.qtyMode);
+    applyProductState(platform, data.products, data.qtyMode);
   } catch (err) {
     alert(err.message);
   }
-};
+}
 
-$("resetProductsBtn").onclick = async () => {
-  if (!confirm("등록한 상품을 모두 지울까요? 이미 접수된 주문은 그대로 둡니다.")) return;
+async function resetLaneProducts(platform) {
+  if (!confirm(`${platformLabel(platform)}에 등록한 상품을 모두 지울까요? 이미 접수된 주문은 그대로 둡니다.`)) return;
   try {
-    const data = await api("/api/sessions/products/reset", { method: "POST", body: platformBody() });
-    applyProductState(data.products || [], data.qtyMode);
+    const data = await api("/api/sessions/products/reset", { method: "POST", body: platformBody(platform) });
+    applyProductState(platform, data.products || [], data.qtyMode);
   } catch (err) {
     alert(err.message);
   }
-};
+}
 
-$("qtyBtn").onclick = async () => {
+async function toggleQtyMode(platform) {
   try {
-    const data = await api("/api/sessions/qty-mode", { method: "POST", body: platformBody() });
-    $("qtyBtn").textContent = data.qtyMode?.enabled ? "이거모드 ON" : "이거모드";
+    const data = await api("/api/sessions/qty-mode", { method: "POST", body: platformBody(platform) });
+    applyProductState(platform, state.productsByPlatform[platform] || [], data.qtyMode);
   } catch (err) {
     alert(err.message);
   }
-};
+}
 
-$("shotBtn").onclick = async () => {
-  if (!canUseShots()) return;
-  const next = state.screenCapture === false;
-  if (next) {
-    try {
-      await ensureScreenShare();
-    } catch (err) {
-      state.screenCapture = false;
-      localStorage.setItem("livoraScreenCapture", "0");
-      setShotButton();
-      setShotHint(err.message || "화면 공유를 허용해야 주문 때 캡처됩니다.");
-      return;
-    }
-  } else {
-    stopScreenShare();
-    setShotHint();
-  }
-  state.screenCapture = next;
-  localStorage.setItem("livoraScreenCapture", next ? "1" : "0");
-  setShotButton();
-  if (!state.session) return;
+async function clearLaneChats(platform) {
+  if (!confirm(`${platformLabel(platform)} 채팅을 지울까요? 지운 채팅은 다시 불러오지 않습니다.`)) return;
   try {
-    const data = await api("/api/sessions/screen-capture", { method: "POST", body: platformBody({ enabled: next }) });
-    state.screenCapture = data.enabled !== false;
-    if (state.screenCapture === false) stopScreenShare();
-    setShotButton();
+    await api("/api/sessions/chats/clear", { method: "POST", body: platformBody(platform) });
+    state.chats = state.chats.filter((c) => c.platform && c.platform !== platform);
+    renderChats();
   } catch (err) {
     alert(err.message);
   }
-};
+}
 
 $("labelBtn").onclick = () => {
   state.labelPrint = !state.labelPrint;
@@ -1321,18 +1272,23 @@ function handleLabelReprint(ev) {
   });
 }
 
-$("liveOrders").addEventListener("click", handleLabelReprint);
 $("orderTable").addEventListener("click", handleLabelReprint);
 
 async function loadShots() {
   if (!canUseShots()) return;
-  const session = exportSession();
-  if (!session) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
+  const targets = exportTargets();
+  if (!targets.length) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
   try {
-    const data = await api(`/api/sessions/${session.id}/shots`);
-    $("fileList").innerHTML = (data.files || []).map((file) => `
-      <a class="file-item" href="/api/sessions/${session.id}/shots/${encodeURIComponent(file)}" target="_blank">${file}</a>
-    `).join("") || "<div class='file-item'>저장된 화면 캡처가 없습니다. 화면캡처를 켠 뒤 주문이 들어오면 여기에 쌓입니다. 방송 종료 후 24시간이 지나면 지워집니다.</div>";
+    const blocks = [];
+    for (const session of targets) {
+      const data = await api(`/api/sessions/${session.id}/shots`);
+      const files = data.files || [];
+      const label = platformLabel(session.platform) || "방송";
+      blocks.push(files.length
+        ? files.map((file) => `<a class="file-item" href="/api/sessions/${session.id}/shots/${encodeURIComponent(file)}" target="_blank">${label} · ${file}</a>`).join("")
+        : `<div class="file-item">${label} 화면 캡처가 없습니다.</div>`);
+    }
+    $("fileList").innerHTML = blocks.join("") || "<div class='file-item'>저장된 화면 캡처가 없습니다. 상품을 등록하면 여기에 쌓입니다. 방송 종료 후 24시간이 지나면 지워집니다.</div>";
   } catch (err) {
     alert(err.message);
   }
@@ -1350,8 +1306,9 @@ function renderSummaryText(kind, data) {
       `구매자 ${a.buyers || 0}명`,
       `주문 ${a.orderCount || 0}줄`,
       `수량 ${a.qty || 0}개`,
-      `금액 ${Number(a.amount || 0).toLocaleString("ko-KR")}원`
-    ].join("\n");
+      `금액 ${Number(a.amount || 0).toLocaleString("ko-KR")}원`,
+      Number(a.shortageQty || 0) > 0 ? `재고부족 ${a.shortageQty}개` : ""
+    ].filter(Boolean).join("\n");
   }
   if (kind === "product") {
     return (data.products || []).map((p) =>
@@ -1367,39 +1324,33 @@ function renderSummaryText(kind, data) {
 }
 
 async function showSummary(kind) {
-  try {
-    const q = selectedPlatform() ? `?platform=${encodeURIComponent(selectedPlatform())}` : "";
-    const data = await api(`/api/sessions/summary${q}`);
-    $("summaryBox").textContent = renderSummaryText(kind, data);
-  } catch (err) {
-    $("summaryBox").textContent = err.message;
+  const blocks = [];
+  for (const platform of DESK_PLATFORMS) {
+    try {
+      const data = await api(`/api/sessions/summary?platform=${encodeURIComponent(platform)}`);
+      blocks.push(`${platformLabel(platform)}\n${renderSummaryText(kind, data)}`);
+    } catch (err) {
+      blocks.push(`${platformLabel(platform)}\n${err.message}`);
+    }
   }
+  $("summaryBox").textContent = blocks.join("\n\n");
 }
 
 $("summaryAllBtn").onclick = () => showSummary("all");
 $("summaryProductBtn").onclick = () => showSummary("product");
 $("summaryBuyerBtn").onclick = () => showSummary("buyer");
 
-$("clearChatBtn").onclick = async () => {
-  if (!confirm("지금 고른 플랫폼의 채팅을 지울까요? 지운 채팅은 다시 불러오지 않습니다.")) return;
-  try {
-    await api("/api/sessions/chats/clear", { method: "POST", body: platformBody() });
-    const platform = selectedPlatform();
-    state.chats = state.chats.filter((c) => c.platform && c.platform !== platform);
-    renderChats();
-  } catch (err) {
-    alert(err.message);
-  }
-};
-
 $("clearOrdersBtn").onclick = async () => {
-  if (!confirm("지금 고른 플랫폼의 주문 목록을 지울까요? 이미 받은 엑셀은 그대로입니다.")) return;
+  const platforms = liveSessions().map((row) => row.platform);
+  if (!platforms.length) return alert("수집 중인 방송이 없습니다.");
+  if (!confirm("수집 중인 틱톡·유튜브 주문 목록을 지울까요? 이미 받은 엑셀은 그대로입니다.")) return;
   try {
-    await api("/api/sessions/orders/clear", { method: "POST", body: platformBody() });
-    const platform = selectedPlatform();
-    state.orders = state.orders.filter((o) => o.platform && o.platform !== platform);
-    state.reviews = state.reviews.filter((r) => r.platform && r.platform !== platform);
-    state.outputs = [];
+    for (const platform of platforms) {
+      await api("/api/sessions/orders/clear", { method: "POST", body: platformBody(platform) });
+      state.orders = state.orders.filter((o) => o.platform && o.platform !== platform);
+      state.reviews = state.reviews.filter((r) => r.platform && r.platform !== platform);
+      state.outputs = state.outputs.filter((row) => row.platform !== platform);
+    }
     renderOrders();
     renderReviews();
     renderOutputs();
@@ -1409,29 +1360,83 @@ $("clearOrdersBtn").onclick = async () => {
   }
 };
 
-async function captureProductShot() {
+async function captureProductShot(platform) {
   if (!canUseShots()) return;
+  const target = platform || state.activePlatform;
   try {
-    if (state.screenCapture !== false && !isScreenShareLive()) {
-      await ensureScreenShare();
-    }
-    const image = isScreenShareLive() ? await captureScreenDataUrl() : "";
+    if (!isScreenShareLive()) await ensureScreenShare();
+    const image = await captureScreenDataUrl();
+    const name = laneField(target, "name") || state.qtyByPlatform[target]?.product || "수동";
     const data = await api("/api/sessions/product-shot", {
       method: "POST",
-      body: platformBody({ name: $("productName").value.trim() || "F2", image })
+      body: platformBody(target, { name, image, attachCurrent: true })
     });
-    setShotHint(`상품 확인 캡처 저장: ${data.shotFile}. 다음 상품 등록에 이 사진이 붙습니다.`);
+    if (data.registration) {
+      upsertProduct(target, data.registration);
+      setCurrentProduct(target, data.registration, data.qtyMode);
+      setShotHint(`${platformLabel(target)} 현재 상품 화면을 저장했습니다. 상품 이름을 누르면 열립니다.`);
+    } else {
+      setShotHint(`${platformLabel(target)} 화면을 저장했습니다. 다음 상품 등록에 이 사진이 붙습니다.`);
+    }
   } catch (err) {
     alert(err.message);
   }
 }
+$("deskPage").addEventListener("click", (ev) => {
+  if (ev.target.closest("[data-label-nick]")) {
+    handleLabelReprint(ev);
+    return;
+  }
+  const lane = ev.target.closest("[data-platform]");
+  if (!lane) return;
+  const platform = lane.dataset.platform;
+  state.activePlatform = platform;
+  const action = ev.target.closest("[data-action]")?.dataset.action;
+  if (action === "start") return startPlatform(platform);
+  if (action === "stop") return stopPlatform(platform);
+  if (action === "qty") return toggleQtyMode(platform);
+  if (action === "register") return registerProduct(platform);
+  if (action === "product-shot") return captureProductShot(platform);
+  if (action === "reset-products") return resetLaneProducts(platform);
+  if (action === "clear-chat") return clearLaneChats(platform);
+  const removeKey = ev.target?.dataset?.remove;
+  if (removeKey) {
+    const chip = ev.target.closest(".product-chip");
+    const label = (chip?.textContent || "").replace("삭제", "").trim() || "이 상품";
+    return removeLaneProduct(platform, removeKey, label);
+  }
+  const chip = ev.target.closest(".product-chip");
+  const shot = chip?.dataset?.shot;
+  if (shot && canUseShots()) {
+    const href = orderShotHref(shot, chip.dataset.session);
+    if (href) window.open(href, "_blank", "noopener");
+    else alert("캡처 파일을 열 수 없습니다. 수집 화면에서 다시 열어 보세요.");
+  }
+});
 
-$("productShotBtn").onclick = captureProductShot;
+$("deskPage").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  const role = ev.target?.dataset?.role;
+  if (!["name", "number", "size", "color", "qty", "price", "stock"].includes(role)) return;
+  const platform = ev.target.closest("[data-platform]")?.dataset.platform;
+  if (!platform) return;
+  ev.preventDefault();
+  registerProduct(platform);
+});
+
+$("deskPage").addEventListener("focusin", (ev) => {
+  const platform = ev.target.closest("[data-platform]")?.dataset.platform;
+  if (platform) state.activePlatform = platform;
+});
+
 document.addEventListener("keydown", (e) => {
   if (e.key !== "F2") return;
   if ($("appView").classList.contains("hidden")) return;
+  const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName);
+  if (typing && !document.activeElement.closest("#deskPage")) return;
   e.preventDefault();
-  captureProductShot();
+  const platform = document.activeElement?.closest?.("[data-platform]")?.dataset.platform || state.activePlatform;
+  captureProductShot(platform);
 });
 
 function exportStamp() {
@@ -1470,11 +1475,20 @@ async function downloadFile(url, filename) {
   URL.revokeObjectURL(fileUrl);
 }
 
+function exportTargets() {
+  const lives = liveSessions();
+  if (lives.length) return lives;
+  return state.lastSession?.id ? [state.lastSession] : [];
+}
+
 $("excelBtn").onclick = async () => {
-  const session = exportSession();
-  if (!session) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
+  const targets = exportTargets();
+  if (!targets.length) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
   try {
-    await downloadFile(`/api/sessions/${session.id}/export/excel`, exportFileName("orders"));
+    for (const session of targets) {
+      const kind = session.platform ? `orders-${session.platform}` : "orders";
+      await downloadFile(`/api/sessions/${session.id}/export/excel`, exportFileName(kind));
+    }
   } catch (err) {
     alert(err.message);
   }
@@ -1492,12 +1506,18 @@ $("chatExcelFilesBtn").onclick = downloadChatExcel;
 $("shotsBtn").onclick = loadShots;
 
 $("invoiceBtn").onclick = async () => {
-  const session = exportSession();
-  if (!session) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
-  const data = await api(`/api/sessions/${session.id}/export/invoices`);
-  $("fileList").innerHTML = (data.files || []).map((file) => `
-    <a class="file-item" href="/api/sessions/${session.id}/invoices/${encodeURIComponent(file)}" target="_blank">${file}</a>
-  `).join("") || "<div class='file-item'>생성된 정산서가 없습니다.</div>";
+  const targets = exportTargets();
+  if (!targets.length) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
+  const blocks = [];
+  for (const session of targets) {
+    const data = await api(`/api/sessions/${session.id}/export/invoices`);
+    const files = data.files || [];
+    const label = platformLabel(session.platform) || "방송";
+    blocks.push(files.length
+      ? files.map((file) => `<a class="file-item" href="/api/sessions/${session.id}/invoices/${encodeURIComponent(file)}" target="_blank">${label} · ${file}</a>`).join("")
+      : `<div class="file-item">${label} 정산서가 없습니다.</div>`);
+  }
+  $("fileList").innerHTML = blocks.join("") || "<div class='file-item'>생성된 정산서가 없습니다.</div>";
 };
 
 $("addUserBtn").onclick = async () => {

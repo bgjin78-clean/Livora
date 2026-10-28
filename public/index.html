@@ -75,46 +75,94 @@
 
       <section id="deskPage" class="page">
         <div class="control-row">
-          <select id="platformSelect"></select>
-          <select id="channelSelect"></select>
-          <button id="startBtn" class="gold-btn" type="button">수집 시작</button>
-          <button id="stopBtn" class="ghost-btn" type="button">종료</button>
-          <button id="qtyBtn" class="ghost-btn" type="button">이거모드</button>
-          <button id="shotBtn" class="ghost-btn" type="button">화면캡처 ON</button>
           <button id="labelBtn" class="ghost-btn" type="button">라벨</button>
         </div>
         <p id="channelIdsHint" class="register-hint">승인된 채널을 불러오는 중</p>
-        <p id="shotHint" class="register-hint">화면캡처를 켜면 화면 공유 창이 뜹니다. 전체 화면 또는 라이브 창을 고르세요. 상품을 등록하거나 주문이 들어오면 그 화면을 저장합니다. 방송이 끝나도 24시간은 다시 볼 수 있고, 그 다음에 서버에서 지웁니다.</p>
+        <p id="shotHint" class="register-hint">상품을 등록하면 그 화면을 바로 저장합니다. 처음에는 화면 공유 창이 뜨니 전체 화면 또는 라이브 창을 고르세요. 찍히지 않았거나 다시 찍으려면 수동 캡처를 누르세요. 방송이 끝나도 24시간은 다시 볼 수 있고, 그 다음에 서버에서 지웁니다.</p>
         <p id="labelHint" class="register-hint">라벨을 켜면 주문이 들어올 때 50×40mm 인쇄 창이 뜹니다. TSC DA220을 고르고 용지 크기를 맞추세요. 놓친 라벨은 주문 옆의 라벨 버튼으로 다시 찍을 수 있습니다.</p>
-        <div class="register-row">
-          <input id="productName" placeholder="상품명" />
-          <input id="productNumber" inputmode="numeric" placeholder="번호" />
-          <input id="productSize" placeholder="사이즈  s.m.l" />
-          <input id="productColor" placeholder="색상  블랙,화이트" />
-          <input id="productQty" inputmode="numeric" placeholder="수량" />
-          <input id="productPrice" inputmode="numeric" placeholder="가격" />
-          <input id="productStock" inputmode="numeric" placeholder="재고" />
-          <button id="registerBtn" class="mint-btn" type="button">상품 등록</button>
-          <button id="productShotBtn" class="ghost-btn" type="button">F2 캡처</button>
-          <button id="resetProductsBtn" class="ghost-btn" type="button">상품 초기화</button>
-        </div>
-        <p id="currentProduct" class="register-hint">현재 등록 상품 없음</p>
-        <div id="productList" class="product-chips"></div>
-        <div class="desk-grid">
-          <article class="panel">
-            <h3>실시간 채팅</h3>
-            <button id="clearChatBtn" class="ghost-btn" type="button">채팅 지우기</button>
-            <div id="chatList" class="feed"></div>
-          </article>
-          <article class="panel">
-            <h3>접수된 주문</h3>
-            <div id="liveOrders" class="feed"></div>
-          </article>
-          <article class="panel">
-            <h3>실시간 출력</h3>
-            <p class="register-hint">주문이 들어오면 수량만큼 한 줄씩 나갑니다. 예전 라프 출력과 같습니다.</p>
-            <div id="outputList" class="feed"></div>
-          </article>
+        <div class="platform-split">
+          <section class="platform-lane tiktok" data-platform="tiktok">
+            <header class="lane-head">
+              <h3>틱톡</h3>
+              <span class="lane-status" data-role="status">대기</span>
+            </header>
+            <div class="control-row">
+              <select data-role="channel"></select>
+              <button class="gold-btn" type="button" data-action="start">수집 시작</button>
+              <button class="ghost-btn" type="button" data-action="stop">종료</button>
+              <button class="ghost-btn" type="button" data-action="qty" data-role="qtyBtn">이거모드</button>
+            </div>
+            <div class="register-row">
+              <input data-role="name" placeholder="상품명" />
+              <input data-role="number" inputmode="numeric" placeholder="번호" />
+              <input data-role="size" placeholder="사이즈  s.m.l" />
+              <input data-role="color" placeholder="색상  블랙,화이트" />
+              <input data-role="qty" inputmode="numeric" placeholder="수량" />
+              <input data-role="price" inputmode="numeric" placeholder="가격" />
+              <input data-role="stock" inputmode="numeric" placeholder="재고" />
+              <button class="mint-btn" type="button" data-action="register">상품 등록</button>
+              <button class="ghost-btn product-shot-btn" type="button" data-action="product-shot" title="F2">수동 캡처</button>
+              <button class="ghost-btn" type="button" data-action="reset-products">상품 초기화</button>
+            </div>
+            <p class="register-hint" data-role="current">현재 등록 상품 없음</p>
+            <div class="product-chips" data-role="products"></div>
+            <div class="lane-feeds">
+              <article class="panel">
+                <h3>실시간 채팅</h3>
+                <button class="ghost-btn" type="button" data-action="clear-chat">채팅 지우기</button>
+                <div class="feed" data-role="chats"></div>
+              </article>
+              <article class="panel">
+                <h3>접수된 주문</h3>
+                <div class="feed" data-role="orders"></div>
+              </article>
+              <article class="panel">
+                <h3>실시간 출력</h3>
+                <div class="feed" data-role="outputs"></div>
+              </article>
+            </div>
+          </section>
+          <section class="platform-lane youtube" data-platform="youtube">
+            <header class="lane-head">
+              <h3>유튜브</h3>
+              <span class="lane-status" data-role="status">대기</span>
+            </header>
+            <div class="control-row">
+              <select data-role="channel"></select>
+              <button class="gold-btn" type="button" data-action="start">수집 시작</button>
+              <button class="ghost-btn" type="button" data-action="stop">종료</button>
+              <button class="ghost-btn" type="button" data-action="qty" data-role="qtyBtn">이거모드</button>
+            </div>
+            <div class="register-row">
+              <input data-role="name" placeholder="상품명" />
+              <input data-role="number" inputmode="numeric" placeholder="번호" />
+              <input data-role="size" placeholder="사이즈  s.m.l" />
+              <input data-role="color" placeholder="색상  블랙,화이트" />
+              <input data-role="qty" inputmode="numeric" placeholder="수량" />
+              <input data-role="price" inputmode="numeric" placeholder="가격" />
+              <input data-role="stock" inputmode="numeric" placeholder="재고" />
+              <button class="mint-btn" type="button" data-action="register">상품 등록</button>
+              <button class="ghost-btn product-shot-btn" type="button" data-action="product-shot" title="F2">수동 캡처</button>
+              <button class="ghost-btn" type="button" data-action="reset-products">상품 초기화</button>
+            </div>
+            <p class="register-hint" data-role="current">현재 등록 상품 없음</p>
+            <div class="product-chips" data-role="products"></div>
+            <div class="lane-feeds">
+              <article class="panel">
+                <h3>실시간 채팅</h3>
+                <button class="ghost-btn" type="button" data-action="clear-chat">채팅 지우기</button>
+                <div class="feed" data-role="chats"></div>
+              </article>
+              <article class="panel">
+                <h3>접수된 주문</h3>
+                <div class="feed" data-role="orders"></div>
+              </article>
+              <article class="panel">
+                <h3>실시간 출력</h3>
+                <div class="feed" data-role="outputs"></div>
+              </article>
+            </div>
+          </section>
         </div>
       </section>
 

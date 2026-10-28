@@ -262,7 +262,7 @@ function createRouter(broadcast) {
         user: req.user,
         platform: req.body?.platform,
         channelId: req.body?.channelId,
-        screenCapture: req.user.role !== "admin" && req.body?.screenCapture !== false,
+        screenCapture: req.user.role !== "admin",
         broadcast: (sessionId, type, payload) => {
           const live = collector.getSession(sessionId);
           if (live) broadcast(live.userId, type, payload);
@@ -324,7 +324,12 @@ function createRouter(broadcast) {
     const live = liveFor(req);
     if (!live) return res.status(400).json({ ok: false, message: "먼저 수집을 시작하세요." });
     try {
-      const result = await collector.capturePendingProductShot(live, req.body?.name || "F2", req.body?.image);
+      const result = await collector.capturePendingProductShot(
+        live,
+        req.body?.name || "수동",
+        req.body?.image,
+        req.body?.attachCurrent !== false
+      );
       if (!result.ok) return res.status(400).json(result);
       res.json(result);
     } catch (err) {
@@ -385,12 +390,16 @@ function createRouter(broadcast) {
     const lastSession = collector.publicSession(live) || lastSessionFor(req.user.id, requestPlatform(req) || undefined);
     const sessionId = live?.id || lastSession?.id;
     const orders = sessionId ? db.listOrders(sessionId) : [];
-    const totalQty = orders.reduce((sum, o) => sum + Number(o.qty || 0), 0);
-    const totalAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
-    const buyers = new Set(orders.map((o) => o.uid || o.nick)).size;
+    const confirmed = orders.filter((o) => (o.stock_status || "") !== "shortage");
+    const shortageQty = orders
+      .filter((o) => (o.stock_status || "") === "shortage")
+      .reduce((sum, o) => sum + Number(o.qty || 0), 0);
+    const totalQty = confirmed.reduce((sum, o) => sum + Number(o.qty || 0), 0);
+    const totalAmount = confirmed.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+    const buyers = new Set(confirmed.map((o) => o.uid || o.nick)).size;
     const products = {};
     const people = {};
-    for (const o of orders) {
+    for (const o of confirmed) {
       const option = [o.size, o.color, o.option_name].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" / ");
       const pKey = [o.product || "", option, Number(o.price || 0)].join("||");
       if (!products[pKey]) products[pKey] = { product: o.product, option, qty: 0, amount: 0 };
@@ -404,7 +413,7 @@ function createRouter(broadcast) {
     }
     res.json({
       ok: true,
-      all: { buyers, orderCount: orders.length, qty: totalQty, amount: totalAmount },
+      all: { buyers, orderCount: confirmed.length, qty: totalQty, amount: totalAmount, shortageQty },
       products: Object.values(products).sort((a, b) => String(a.product).localeCompare(String(b.product), "ko")),
       buyers: Object.values(people).sort((a, b) => String(a.nickname).localeCompare(String(b.nickname), "ko"))
     });
@@ -504,7 +513,7 @@ function createRouter(broadcast) {
       return res.status(404).json({ ok: false, message: "세션을 찾지 못했습니다." });
     }
     const live = collector.getSession(session.id);
-    const orders = live
+    const orders = (live
       ? live.engine.snapshot().orders
       : db.listOrders(session.id).map((o) => ({
           nickname: o.nick,
@@ -512,8 +521,10 @@ function createRouter(broadcast) {
           option: o.option_name,
           qty: o.qty,
           price: o.price,
-          amount: o.amount
-        }));
+          amount: o.amount,
+          stockStatus: o.stock_status || ""
+        }))
+    ).filter((o) => (o.stockStatus || o.stock_status || "") !== "shortage");
     const { files } = await renderInvoices(session.id, orders);
     if (req.user.role !== "admin") {
       const owner = db.getUserById(session.user_id);

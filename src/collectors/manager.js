@@ -72,7 +72,7 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
     status: "running",
     startedAt: new Date().toISOString(),
     error: "",
-    screenCapture: user.role !== "admin" && screenCapture !== false,
+    screenCapture: user.role !== "admin",
     shotErrorSent: false,
     pendingShotFile: "",
     engine,
@@ -127,7 +127,7 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
 }
 
 function invoiceOrdersFromEngine(session) {
-  return session.engine.snapshot().orders.map((o) => ({
+  return session.engine.snapshot().orders.filter((o) => o.stockStatus !== "shortage").map((o) => ({
     nickname: o.nickname,
     product: o.product,
     option: o.option,
@@ -244,9 +244,6 @@ function saveClientOrderShot(session, payload, image) {
 }
 
 function saveClientProductShot(session, productName = "F2", image) {
-  if (!session.screenCapture) {
-    return { ok: false, message: "화면캡처가 꺼져 있습니다. 화면캡처를 켠 뒤 F2를 누르세요." };
-  }
   const buffer = decodeImage(image);
   const seller = db.getUserById(session.userId);
   const shotFile = saveUploadedProductShot({
@@ -255,26 +252,31 @@ function saveClientProductShot(session, productName = "F2", image) {
     productName,
     buffer
   });
-  session.pendingShotFile = shotFile;
   return { ok: true, shotFile };
 }
 
-async function capturePendingProductShot(session, productName = "F2", image) {
-  if (image) return saveClientProductShot(session, productName, image);
-  if (!canGrabDesktop()) {
-    return { ok: false, message: "화면캡처를 켠 뒤 화면 공유를 허용하고 F2를 누르세요. 웹 서버는 판매자 PC를 직접 찍을 수 없습니다." };
+async function capturePendingProductShot(session, productName = "F2", image, attachCurrent = false) {
+  let saved;
+  if (image) saved = saveClientProductShot(session, productName, image);
+  else if (!canGrabDesktop()) {
+    return { ok: false, message: "화면 공유를 허용한 뒤 수동 캡처를 다시 누르세요. 웹 서버는 판매자 PC를 직접 찍을 수 없습니다." };
+  } else {
+    const seller = db.getUserById(session.userId);
+    const shotFile = await captureProductScreen({
+      sessionId: session.id,
+      seller,
+      productName
+    });
+    saved = { ok: true, shotFile };
   }
-  if (!session.screenCapture) {
-    return { ok: false, message: "화면캡처가 꺼져 있습니다. 화면캡처를 켠 뒤 F2를 누르세요." };
+  if (!saved.ok) return saved;
+  if (attachCurrent && session.engine.qtyMode.product) {
+    const attached = session.engine.attachShot(saved.shotFile);
+    session.pendingShotFile = "";
+    return { ...saved, ...attached, attached: true };
   }
-  const seller = db.getUserById(session.userId);
-  const shotFile = await captureProductScreen({
-    sessionId: session.id,
-    seller,
-    productName
-  });
-  session.pendingShotFile = shotFile;
-  return { ok: true, shotFile };
+  session.pendingShotFile = saved.shotFile;
+  return { ...saved, attached: false };
 }
 
 async function registerProduct(session, input, image) {
@@ -294,12 +296,11 @@ async function registerProduct(session, input, image) {
     try {
       const saved = saveClientProductShot(session, productName, image);
       shotPath = saved.shotFile || "";
-      session.pendingShotFile = "";
     } catch (err) {
       console.error("[product shot upload]", err.message);
     }
   }
-  if (!shotPath && session.screenCapture && canGrabDesktop()) {
+  if (!shotPath && canGrabDesktop()) {
     try {
       const seller = db.getUserById(session.userId);
       shotPath = await captureProductScreen({

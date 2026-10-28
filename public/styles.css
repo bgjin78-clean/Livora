@@ -180,6 +180,9 @@ main { padding: 28px 32px 40px; }
 }
 .match-tag.guess { color: #f3d19c; background: rgba(232, 195, 122, 0.14); }
 .order-row.guess { outline: 1px solid rgba(232, 195, 122, 0.45); }
+.order-row.shortage { outline: 1px solid rgba(224, 112, 112, 0.7); }
+.match-tag.shortage { color: #ffb4b4; background: rgba(224, 92, 92, 0.16); }
+tr.shortage td { color: #ffb4b4; }
 .order-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
 .shot-link {
   display: inline-block;
@@ -189,6 +192,23 @@ main { padding: 28px 32px 40px; }
   font-size: 12px;
 }
 .desk-grid, .admin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.platform-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.platform-lane {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.platform-lane.tiktok { border-color: rgba(126, 224, 198, 0.35); }
+.platform-lane.youtube { border-color: rgba(232, 195, 122, 0.4); }
+.lane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.lane-head h3 { margin: 0; font-size: 18px; }
+.lane-status { color: var(--muted); font-size: 13px; }
+.lane-status.live { color: var(--mint); }
+.platform-lane .register-row input { min-width: 72px; }
+.lane-feeds { display: grid; gap: 12px; }
+.platform-lane .feed { height: 240px; }
 @media (min-width: 1400px) {
   .desk-grid { grid-template-columns: 1fr 1fr 1fr; }
 }
@@ -223,10 +243,9 @@ main { padding: 28px 32px 40px; }
 .platform-tag.youtube { color: #e8c37a; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
 .admin-stats { grid-template-columns: repeat(4, 1fr); }
-body.is-admin #shotBtn,
 body.is-admin #shotHint,
 body.is-admin #shotsBtn,
-body.is-admin #productShotBtn,
+body.is-admin .product-shot-btn,
 body.is-admin .shot-col {
   display: none !important;
 }
@@ -279,6 +298,6 @@ th, td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--li
 .admin-data .feed { height: 280px; }
 
 @media (max-width: 960px) {
-  .login-shell, .app-shell, .desk-grid, .admin-grid, .stats, .admin-stats { grid-template-columns: 1fr; }
+  .login-shell, .app-shell, .desk-grid, .admin-grid, .platform-split, .stats, .admin-stats { grid-template-columns: 1fr; }
   .login-story { display: none; }
 }

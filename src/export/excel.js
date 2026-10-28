@@ -38,7 +38,7 @@ function stockMeta(products, orders, orderRow) {
   );
   const stock = regs.reduce((sum, p) => Math.max(sum, Number(p.stock || 0)), 0);
   const sold = (orders || [])
-    .filter((o) => String(o.product || "") === productName)
+    .filter((o) => String(o.product || "") === productName && (o.stock_status || "") !== "shortage")
     .reduce((sum, o) => sum + Number(o.qty || 0), 0);
   return {
     stock,
@@ -71,12 +71,13 @@ function setShotCell(cell, sessionId, file) {
 
 async function writeExcel(sessionId) {
   const orders = db.listOrders(sessionId);
+  const confirmedOrders = orders.filter((o) => (o.stock_status || "") !== "shortage");
   const chats = db.listChats(sessionId, 5000);
   const products = db.listProducts(sessionId);
   const workbook = new ExcelJS.Workbook();
-  const totalQty = orders.reduce((sum, o) => sum + Number(o.qty || 0), 0);
-  const totalAmount = orders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
-  const buyers = new Set(orders.map((o) => o.uid || o.nick)).size;
+  const totalQty = confirmedOrders.reduce((sum, o) => sum + Number(o.qty || 0), 0);
+  const totalAmount = confirmedOrders.reduce((sum, o) => sum + Number(o.amount || 0), 0);
+  const buyers = new Set(confirmedOrders.map((o) => o.uid || o.nick)).size;
 
   const productSheet = workbook.addWorksheet("상품기준");
   productSheet.columns = [
@@ -90,6 +91,7 @@ async function writeExcel(sessionId) {
     { header: "초기재고", key: "stock", width: 12 },
     { header: "판매수량", key: "sold", width: 12 },
     { header: "남은수량", key: "remain", width: 12 },
+    { header: "상태", key: "status", width: 12 },
     { header: "주문자", key: "nick", width: 20 },
     { header: "채팅", key: "msg", width: 40 },
     { header: "스샷파일명", key: "shot", width: 40 }
@@ -114,6 +116,7 @@ async function writeExcel(sessionId) {
       stock: meta.stock || "",
       sold: meta.sold,
       remain: meta.remain,
+      status: (o.stock_status || "") === "shortage" ? "재고부족" : "",
       nick: o.nick,
       msg: o.msg,
       shot: o.shot_path || ""
@@ -142,7 +145,7 @@ async function writeExcel(sessionId) {
     { header: "남은수량", key: "remain", width: 12 }
   ];
   const grouped = {};
-  for (const o of orders) {
+  for (const o of confirmedOrders) {
     const key = productSummaryKey(o);
     if (!grouped[key]) {
       const sc = orderSizeColor(o);
@@ -177,6 +180,7 @@ async function writeExcel(sessionId) {
     { header: "수량", key: "qty", width: 10 },
     { header: "단가", key: "price", width: 12 },
     { header: "소계", key: "amount", width: 14 },
+    { header: "상태", key: "status", width: 12 },
     { header: "채팅", key: "msg", width: 40 },
     { header: "스샷파일명", key: "shot", width: 40 }
   ];
@@ -194,7 +198,8 @@ async function writeExcel(sessionId) {
       color: sc.color,
       qty: o.qty,
       price: o.price,
-      amount: o.amount,
+      amount: (o.stock_status || "") === "shortage" ? 0 : o.amount,
+      status: (o.stock_status || "") === "shortage" ? "재고부족" : "",
       msg: o.msg,
       shot: o.shot_path || ""
     });

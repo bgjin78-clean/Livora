@@ -150,6 +150,9 @@ function open() {
   if (!orderCols.includes("inferred")) {
     db.exec("ALTER TABLE orders ADD COLUMN inferred INTEGER DEFAULT 0");
   }
+  if (!orderCols.includes("stock_status")) {
+    db.exec("ALTER TABLE orders ADD COLUMN stock_status TEXT DEFAULT ''");
+  }
 
   seed();
   return db;
@@ -482,6 +485,32 @@ function insertProduct(row) {
   `).run({ created_at: now(), default_qty: 1, ...row });
 }
 
+function updateProductShot(sessionId, reg, shotPath) {
+  open().prepare(`
+    UPDATE products
+    SET shot_path = ?
+    WHERE id = (
+      SELECT id FROM products
+      WHERE session_id = ?
+        AND type = ?
+        AND IFNULL(product, '') = ?
+        AND IFNULL(number, '') = ?
+        AND IFNULL(options_json, '[]') = ?
+        AND IFNULL(price, 0) = ?
+      ORDER BY id DESC
+      LIMIT 1
+    )
+  `).run(
+    shotPath || "",
+    sessionId,
+    reg.type,
+    reg.product || "",
+    reg.number || "",
+    JSON.stringify(reg.options || []),
+    Number(reg.price || 0)
+  );
+}
+
 function deleteProduct(sessionId, reg) {
   open().prepare(`
     DELETE FROM products
@@ -549,9 +578,9 @@ function insertChat(row) {
 function upsertOrder(row) {
   open().prepare(`
     INSERT INTO orders (
-      session_id, uid, nick, product, option_name, color, size, qty, price, amount, msg, shot_path, identity_key, match_source, inferred, created_at, updated_at
+      session_id, uid, nick, product, option_name, color, size, qty, price, amount, msg, shot_path, identity_key, match_source, inferred, stock_status, created_at, updated_at
     ) VALUES (
-      @session_id, @uid, @nick, @product, @option_name, @color, @size, @qty, @price, @amount, @msg, @shot_path, @identity_key, @match_source, @inferred, @created_at, @updated_at
+      @session_id, @uid, @nick, @product, @option_name, @color, @size, @qty, @price, @amount, @msg, @shot_path, @identity_key, @match_source, @inferred, @stock_status, @created_at, @updated_at
     )
     ON CONFLICT(session_id, uid, identity_key) DO UPDATE SET
       nick = excluded.nick,
@@ -565,8 +594,9 @@ function upsertOrder(row) {
       END,
       match_source = excluded.match_source,
       inferred = excluded.inferred,
+      stock_status = excluded.stock_status,
       updated_at = excluded.updated_at
-  `).run({ created_at: now(), updated_at: now(), match_source: "", inferred: 0, ...row });
+  `).run({ created_at: now(), updated_at: now(), match_source: "", inferred: 0, stock_status: "", ...row });
 }
 
 function updateOrderShot(sessionId, uid, identityKey, shotPath) {
@@ -709,6 +739,7 @@ module.exports = {
   listLiveSessions,
   listLiveSessionsWithCounts,
   insertProduct,
+  updateProductShot,
   deleteProduct,
   deleteAliasesForProduct,
   deleteProductsForSession,
