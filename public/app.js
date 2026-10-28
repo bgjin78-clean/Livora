@@ -1670,7 +1670,7 @@ $("invoiceBtn").onclick = async () => {
     const data = await api(`/api/sessions/${session.id}/export/invoices`);
     const files = data.files || [];
     const label = platformLabel(session.platform) || "방송";
-    blocks.push(`<p class="register-hint">${label} 구매자별 정산서입니다. 이미지를 받아 고객에게 메일이나 카톡으로 보낼 수 있습니다.</p>`);
+    blocks.push(`<p class="register-hint">${label} 구매자별 정산서입니다. 기본배송비 3,500원이 합계에 포함되어 있고, 이미지를 받아 고객에게 메일이나 카톡으로 보낼 수 있습니다.</p>`);
     blocks.push(files.length
       ? files.map((file) => {
           const buyer = String(file).replace(/^정산서_/, "").replace(/\.jpg$/i, "");

@@ -138,7 +138,8 @@ function invoiceOrdersFromEngine(session) {
     size: o.size,
     qty: o.qty,
     price: o.price,
-    amount: o.amount
+    amount: o.amount,
+    time: o.time
   }));
 }
 

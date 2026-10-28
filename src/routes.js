@@ -544,6 +544,7 @@ function createRouter(broadcast) {
           qty: o.qty,
           price: o.price,
           amount: o.amount,
+          time: o.created_at || "",
           stockStatus: o.stock_status || ""
         }))
     ).filter((o) => (o.stockStatus || o.stock_status || "") !== "shortage");
