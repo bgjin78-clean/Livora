@@ -53,13 +53,14 @@ function setPage(page) {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.page === page);
   });
-  ["desk", "orders", "files", "admin"].forEach((id) => {
+  ["desk", "orders", "files", "guide", "admin"].forEach((id) => {
     $(`${id}Page`).classList.toggle("hidden", id !== page);
   });
   const titles = {
     desk: ["COLLECTOR", "주문 수집"],
     orders: ["ORDERS", "주문 목록"],
     files: ["ARCHIVE", "엑셀·정산서"],
+    guide: ["GUIDE", "사용법"],
     admin: ["ADMIN", "관리"]
   };
   $("pageEyebrow").textContent = titles[page][0];
@@ -770,6 +771,7 @@ async function bootApp() {
     state.session = cur.session || state.session;
     state.sessions.forEach(setLastSession);
     setLastSession(data.session || data.lastSession || cur.lastSession);
+    applyShippingFields();
     state.chats = cur.chats || [];
     state.orders = cur.orders || [];
     state.reviews = cur.reviews || [];
@@ -1029,6 +1031,19 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
   btn.onclick = () => setPage(btn.dataset.page);
 });
 
+function setGuideTab(tab) {
+  document.querySelectorAll(".guide-tab-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.guideTab === tab);
+  });
+  document.querySelectorAll(".guide-panel").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.guidePanel !== tab);
+  });
+}
+
+document.querySelectorAll(".guide-tab-btn").forEach((btn) => {
+  btn.onclick = () => setGuideTab(btn.dataset.guideTab);
+});
+
 document.querySelectorAll(".admin-tab-btn").forEach((btn) => {
   btn.onclick = () => setAdminTab(btn.dataset.adminTab);
 });
@@ -1153,7 +1168,7 @@ async function startPlatform(platform) {
     $("liveBadge").classList.add("live");
     const data = await api("/api/sessions/start", {
       method: "POST",
-      body: { platform, channelId, screenCapture: canUseShots() }
+      body: { platform, channelId, shipping: laneField(platform, "shipping"), screenCapture: canUseShots() }
     });
     state.sessions = data.sessions || [];
     upsertSession(data.session);
@@ -1180,7 +1195,10 @@ async function stopPlatform(platform) {
   setLiveBadge();
   let data;
   try {
-    data = await api("/api/sessions/stop", { method: "POST", body: { platform } });
+    data = await api("/api/sessions/stop", {
+      method: "POST",
+      body: { platform, shipping: laneField(platform, "shipping") }
+    });
   } catch (err) {
     state.sessions = previousSessions;
     setLiveBadge();
@@ -1333,6 +1351,67 @@ function setCurrentProduct(platform, reg, qtyMode) {
 
 function laneField(platform, role) {
   return deskEl(platform, role)?.value.trim() || "";
+}
+
+function shippingNote(amount) {
+  const value = Number(amount || 0);
+  if (value > 0) return `배송비 ${value.toLocaleString("ko-KR")}원이 합계에 포함되어 있고,`;
+  return "무료배송으로 표시되어 있고,";
+}
+
+function applyShippingFields() {
+  for (const platform of DESK_PLATFORMS) {
+    const input = deskEl(platform, "shipping");
+    if (!input || document.activeElement === input || input.value.trim()) continue;
+    const session = sessionForPlatform(platform);
+    if (Number(session?.shipping) > 0) input.value = String(session.shipping);
+  }
+  const box = $("invoiceShipping");
+  if (!box || document.activeElement === box || box.value.trim()) return;
+  const amounts = exportTargets().map((row) => Number(row.shipping || 0)).filter((amount) => amount > 0);
+  if (amounts.length && amounts.every((amount) => amount === amounts[0])) box.value = String(amounts[0]);
+}
+
+const shippingSaveTimers = {};
+
+function queueShippingSave(platform) {
+  clearTimeout(shippingSaveTimers[platform]);
+  shippingSaveTimers[platform] = setTimeout(() => saveLaneShipping(platform), 250);
+}
+
+async function saveLaneShipping(platform) {
+  const session = sessionForPlatform(platform);
+  if (!session?.id) return;
+  const shipping = laneField(platform, "shipping");
+  try {
+    const data = await api("/api/sessions/shipping", {
+      method: "POST",
+      body: { platform, sessionId: session.id, shipping }
+    });
+    session.shipping = data.shipping;
+  } catch {
+    // 수집 전에는 칸에만 두고, 수집 시작 때 함께 저장한다.
+  }
+}
+
+let invoiceShipTimer = 0;
+
+async function saveInvoiceShipping() {
+  const shipping = $("invoiceShipping")?.value.trim() || "";
+  for (const session of exportTargets()) {
+    const input = session.platform ? deskEl(session.platform, "shipping") : null;
+    if (input && document.activeElement !== input) input.value = shipping;
+    if (!session.id) continue;
+    try {
+      const data = await api("/api/sessions/shipping", {
+        method: "POST",
+        body: { platform: session.platform, sessionId: session.id, shipping }
+      });
+      session.shipping = data.shipping;
+    } catch {
+      // 정산서 버튼을 누를 때 같은 값을 다시 보낸다.
+    }
+  }
 }
 
 async function registerProduct(platform) {
@@ -1578,6 +1657,23 @@ $("deskPage").addEventListener("click", (ev) => {
   }
 });
 
+$("deskPage").addEventListener("input", (ev) => {
+  if (ev.target?.dataset?.role !== "shipping") return;
+  const platform = ev.target.closest("[data-platform]")?.dataset.platform;
+  if (!platform) return;
+  queueShippingSave(platform);
+  const box = $("invoiceShipping");
+  const targets = exportTargets();
+  if (box && document.activeElement !== box && (targets.length <= 1 || targets.every((row) => row.platform === platform))) {
+    box.value = ev.target.value;
+  }
+});
+
+$("invoiceShipping").addEventListener("input", () => {
+  clearTimeout(invoiceShipTimer);
+  invoiceShipTimer = setTimeout(saveInvoiceShipping, 250);
+});
+
 $("deskPage").addEventListener("keydown", (ev) => {
   if (ev.key !== "Enter") return;
   const role = ev.target?.dataset?.role;
@@ -1674,10 +1770,11 @@ $("invoiceBtn").onclick = async () => {
   if (!targets.length) return alert("받을 방송이 없습니다. 먼저 수집을 한 번 하세요.");
   const blocks = [];
   for (const session of targets) {
-    const data = await api(`/api/sessions/${session.id}/export/invoices`);
+    const shipping = $("invoiceShipping").value.trim();
+    const data = await api(`/api/sessions/${session.id}/export/invoices?shipping=${encodeURIComponent(shipping)}`);
     const files = data.files || [];
     const label = platformLabel(session.platform) || "방송";
-    blocks.push(`<p class="register-hint">${label} 구매자별 정산서입니다. 기본배송비 3,500원이 합계에 포함되어 있고, 이미지를 받아 고객에게 메일이나 카톡으로 보낼 수 있습니다.</p>`);
+    blocks.push(`<p class="register-hint">${label} 구매자별 정산서입니다. ${shippingNote(data.shipping)} 이미지를 받아 고객에게 메일이나 카톡으로 보낼 수 있습니다.</p>`);
     blocks.push(files.length
       ? files.map((file) => {
           const buyer = String(file).replace(/^정산서_/, "").replace(/\.jpg$/i, "");

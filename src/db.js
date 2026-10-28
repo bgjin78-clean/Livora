@@ -154,6 +154,11 @@ function open() {
     db.exec("ALTER TABLE orders ADD COLUMN stock_status TEXT DEFAULT ''");
   }
 
+  const sessionCols = db.prepare("PRAGMA table_info(live_sessions)").all().map((col) => col.name);
+  if (!sessionCols.includes("shipping")) {
+    db.exec("ALTER TABLE live_sessions ADD COLUMN shipping INTEGER");
+  }
+
   seed();
   return db;
 }
@@ -431,11 +436,15 @@ function removeChannel(id) {
   return result;
 }
 
-function createLiveSession({ id, userId, platform, channelId }) {
+function createLiveSession({ id, userId, platform, channelId, shipping = null }) {
   open().prepare(`
-    INSERT INTO live_sessions (id, user_id, platform, channel_id, status, started_at)
-    VALUES (?, ?, ?, ?, 'running', ?)
-  `).run(id, userId, platform, channelId, now());
+    INSERT INTO live_sessions (id, user_id, platform, channel_id, status, started_at, shipping)
+    VALUES (?, ?, ?, ?, 'running', ?, ?)
+  `).run(id, userId, platform, channelId, now(), shipping);
+}
+
+function setLiveSessionShipping(id, shipping) {
+  open().prepare("UPDATE live_sessions SET shipping = ? WHERE id = ?").run(shipping, id);
 }
 
 function updateLiveSession(id, patch) {
@@ -740,6 +749,7 @@ module.exports = {
   addChannel,
   removeChannel,
   createLiveSession,
+  setLiveSessionShipping,
   updateLiveSession,
   getLiveSession,
   listLiveSessions,

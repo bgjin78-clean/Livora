@@ -116,7 +116,13 @@ function money(value) {
   return Number(value || 0).toLocaleString("ko-KR");
 }
 
-const BASE_SHIPPING = 3500;
+function parseShipping(value) {
+  const digits = String(value ?? "").replace(/[^\d]/g, "");
+  if (!digits) return null;
+  const amount = Number(digits);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return amount;
+}
 
 function invoiceDate(items) {
   const raw = String((items || []).map((item) => item.time || item.created_at || "").find(Boolean) || "");
@@ -132,7 +138,8 @@ function buyerLabel(nick) {
   return name.startsWith("@") ? name : `@${name}`;
 }
 
-async function renderInvoices(sessionId, orders) {
+async function renderInvoices(sessionId, orders, options = {}) {
+  const shipping = parseShipping(options.shipping);
   const grouped = {};
   for (const order of orders || []) {
     const nick = String(order.nickname || order.nick || "").trim() || "구매자";
@@ -175,17 +182,30 @@ async function renderInvoices(sessionId, orders) {
         height: Math.max(54, lines.length * 30 + 24)
       };
     });
-    rows.push({
-      nick: label,
-      lines: ["기본배송비"],
-      qty: 1,
-      price: BASE_SHIPPING,
-      amount: BASE_SHIPPING,
-      height: 54,
-      shipping: true
-    });
+    rows.push(shipping
+      ? {
+          nick: label,
+          lines: ["배송비"],
+          qty: 1,
+          price: shipping,
+          amount: shipping,
+          height: 54,
+          shipping: true
+        }
+      : {
+          nick: label,
+          lines: ["무료배송"],
+          qtyText: "",
+          priceText: "",
+          amountText: "무료",
+          qty: 0,
+          price: 0,
+          amount: 0,
+          height: 54,
+          shipping: true
+        });
     const goods = rows.filter((row) => !row.shipping).reduce((sum, row) => sum + row.amount, 0);
-    const total = goods + BASE_SHIPPING;
+    const total = goods + (shipping || 0);
     const tableH = 48 + rows.reduce((sum, row) => sum + row.height, 0);
     const height = 210 + tableH + 90;
     const canvas = createCanvas(width, height);
@@ -211,7 +231,7 @@ async function renderInvoices(sessionId, orders) {
     ctx.fillText(`₩${money(total)}`, width - pad, 112);
     ctx.fillStyle = "#888888";
     ctx.font = krFont(18);
-    ctx.fillText(`기본배송비 ${money(BASE_SHIPPING)}원 포함`, width - pad, 146);
+    ctx.fillText(shipping ? `배송비 ${money(shipping)}원 포함` : "무료배송", width - pad, 146);
     ctx.textAlign = "left";
 
     let y = 186;
@@ -242,9 +262,9 @@ async function renderInvoices(sessionId, orders) {
       row.lines.forEach((line, index) => {
         drawText(line, columns[1], y + 34 + index * 30, "#333333");
       });
-      drawText(String(row.qty), columns[2], y + 34, "#333333");
-      drawText(money(row.price), columns[3], y + 34, "#333333");
-      drawText(money(row.amount), columns[4], y + 34, "#333333");
+      drawText(row.qtyText != null ? row.qtyText : String(row.qty), columns[2], y + 34, "#333333");
+      drawText(row.priceText != null ? row.priceText : money(row.price), columns[3], y + 34, "#333333");
+      drawText(row.amountText != null ? row.amountText : money(row.amount), columns[4], y + 34, "#333333");
       y += row.height;
     }
     ctx.beginPath();
@@ -270,4 +290,4 @@ async function renderInvoices(sessionId, orders) {
   return { dir, files };
 }
 
-module.exports = { renderChatShot, renderInvoices };
+module.exports = { renderChatShot, renderInvoices, parseShipping };

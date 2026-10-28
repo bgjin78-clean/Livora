@@ -6,7 +6,7 @@ const auth = require("./auth");
 const collector = require("./collectors/manager");
 const realtime = require("./realtime");
 const { writeExcel, writeChatExcel, writeUserDayChatExcel } = require("./export/excel");
-const { renderInvoices } = require("./export/images");
+const { renderInvoices, parseShipping } = require("./export/images");
 const { listShotFiles } = require("./export/screenshot");
 const { excelFileName } = require("./export/fileName");
 const { archiveSellerFile } = require("./export/archive");
@@ -27,7 +27,8 @@ function createRouter(broadcast) {
       channelId: row.channel_id,
       status: row.status,
       startedAt: row.started_at,
-      stoppedAt: row.stopped_at
+      stoppedAt: row.stopped_at,
+      shipping: row.shipping == null ? null : Number(row.shipping) || null
     };
   }
 
@@ -262,6 +263,7 @@ function createRouter(broadcast) {
         user: req.user,
         platform: req.body?.platform,
         channelId: req.body?.channelId,
+        shipping: req.body?.shipping,
         screenCapture: req.user.role !== "admin",
         broadcast: (sessionId, type, payload) => {
           const live = collector.getSession(sessionId);
@@ -275,8 +277,39 @@ function createRouter(broadcast) {
     }
   });
 
+  router.post("/sessions/shipping", auth.requireAuth, (req, res) => {
+    const shipping = parseShipping(req.body?.shipping);
+    const sessionId = String(req.body?.sessionId || "").trim();
+    if (sessionId) {
+      const row = db.getLiveSession(sessionId);
+      if (!row || (row.user_id !== req.user.id && req.user.role !== "admin")) {
+        return res.status(404).json({ ok: false, message: "세션을 찾지 못했습니다." });
+      }
+      db.setLiveSessionShipping(row.id, shipping);
+      const live = collector.getSession(row.id);
+      if (live) live.shipping = shipping;
+      return res.json({ ok: true, shipping, sessionId: row.id });
+    }
+    const platform = requestPlatform(req);
+    const live = collector.getUserSession(req.user.id, platform || undefined);
+    if (live) {
+      collector.setSessionShipping(live, req.body?.shipping);
+      return res.json({ ok: true, shipping: live.shipping, sessionId: live.id });
+    }
+    const last = lastSessionFor(req.user.id, platform || undefined);
+    if (!last) return res.status(400).json({ ok: false, message: "저장할 방송이 없습니다." });
+    db.setLiveSessionShipping(last.id, shipping);
+    res.json({ ok: true, shipping, sessionId: last.id });
+  });
+
   router.post("/sessions/stop", auth.requireAuth, async (req, res) => {
     const platform = requestPlatform(req);
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, "shipping")) {
+      const targets = platform
+        ? [collector.getUserSession(req.user.id, platform)].filter(Boolean)
+        : collector.getUserSessions(req.user.id);
+      for (const session of targets) collector.setSessionShipping(session, req.body.shipping);
+    }
     const stopped = await collector.stopUserSessions(req.user.id, platform || undefined);
     writeLog(req, "SESSION_STOP", platform || stopped.map((row) => row?.id).join(","));
     const remaining = collector.publicSessions(req.user.id);
@@ -548,7 +581,13 @@ function createRouter(broadcast) {
           stockStatus: o.stock_status || ""
         }))
     ).filter((o) => (o.stockStatus || o.stock_status || "") !== "shortage");
-    const { files } = await renderInvoices(session.id, orders);
+    let shipping = session.shipping == null ? null : parseShipping(session.shipping);
+    if (req.query.shipping != null) {
+      shipping = parseShipping(req.query.shipping);
+      db.setLiveSessionShipping(session.id, shipping);
+      if (live) live.shipping = shipping;
+    }
+    const { files } = await renderInvoices(session.id, orders, { shipping });
     if (req.user.role !== "admin") {
       const owner = db.getUserById(session.user_id);
       for (const filePath of files || []) {
@@ -562,7 +601,7 @@ function createRouter(broadcast) {
         });
       }
     }
-    res.json({ ok: true, files: files.map((f) => path.basename(f)) });
+    res.json({ ok: true, shipping: shipping || 0, files: files.map((f) => path.basename(f)) });
   });
 
   router.get("/sessions/:id/shots", auth.requireAuth, (req, res) => {

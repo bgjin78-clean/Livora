@@ -125,6 +125,22 @@ nav { display: grid; gap: 8px; }
   padding: 8px 14px;
   cursor: pointer;
 }
+.guide-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+.guide-tab-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.guide-tab-btn.active, .guide-tab-btn:hover { color: var(--text); border-color: rgba(232, 195, 122, 0.45); }
+.guide-tab-btn.active { background: #1a1b24; color: var(--gold); }
+.guide-panel { min-height: 0; }
+.guide-panel h3 { margin-top: 0; }
+.guide-panel ol, .guide-panel ul { margin: 8px 0 0; padding-left: 1.2em; line-height: 1.7; }
+.guide-panel li + li { margin-top: 8px; }
+.guide-note { margin: 16px 0 0; color: var(--muted); font-size: 13px; }
 .admin-tab-btn.active, .admin-tab-btn:hover { color: var(--text); border-color: rgba(232, 195, 122, 0.45); }
 .admin-tab-btn.active { background: #1a1b24; color: var(--gold); }
 .admin-tab-page .panel { min-height: 360px; }
@@ -138,6 +154,8 @@ main { padding: 28px 32px 40px; }
 .badge.live { color: #082018; background: var(--mint); border: 0; }
 
 .control-row, .register-row { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+.platform-lane input[data-role="shipping"],
+#invoiceShipping { width: 190px; flex: 0 0 190px; }
 .control-row select { min-width: 160px; }
 #platformSelect { flex: 0 0 140px; min-width: 120px; }
 #channelSelect { flex: 1; min-width: 180px; }

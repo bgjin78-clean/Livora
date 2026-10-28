@@ -10,7 +10,7 @@ const {
   saveUploadedOrderShot,
   saveUploadedProductShot
 } = require("../export/screenshot");
-const { renderInvoices } = require("../export/images");
+const { renderInvoices, parseShipping } = require("../export/images");
 const { sendSessionMail } = require("../export/mail");
 const { keepSessionFiles, saveToUserDesktop } = require("../export/keep");
 const { excelFileName } = require("../export/fileName");
@@ -44,7 +44,7 @@ function withSessionMeta(session, payload = {}) {
   };
 }
 
-async function startSession({ user, platform, channelId, broadcast, screenCapture = true }) {
+async function startSession({ user, platform, channelId, broadcast, screenCapture = true, shipping = null }) {
   const approved = user.role === "admin"
     ? db.findApprovedChannelAny(platform, String(channelId).trim())
     : db.findApprovedChannel(user.id, platform, String(channelId).trim());
@@ -74,6 +74,7 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
     startedAt: new Date().toISOString(),
     error: "",
     screenCapture: user.role !== "admin",
+    shipping: parseShipping(shipping),
     shotErrorSent: false,
     pendingShotFile: "",
     engine,
@@ -85,7 +86,8 @@ async function startSession({ user, platform, channelId, broadcast, screenCaptur
     id: sessionId,
     userId: user.id,
     platform,
-    channelId: approved.channel_id
+    channelId: approved.channel_id,
+    shipping: session.shipping
   });
 
   session.notify = broadcast;
@@ -177,7 +179,9 @@ async function finishSessionFiles(session) {
     console.error("[stop chat excel]", err.message);
   }
   try {
-    const { files: invoices } = await renderInvoices(session.id, invoiceOrdersFromEngine(session));
+    const { files: invoices } = await renderInvoices(session.id, invoiceOrdersFromEngine(session), {
+      shipping: session.shipping
+    });
     for (const filePath of invoices || []) {
       const filename = path.basename(filePath);
       files.push({ filename, path: filePath });
@@ -370,6 +374,13 @@ function clearChats(session) {
   return session.engine.clearChats();
 }
 
+function setSessionShipping(session, raw) {
+  if (!session) return null;
+  session.shipping = parseShipping(raw);
+  db.setLiveSessionShipping(session.id, session.shipping);
+  return session.shipping;
+}
+
 function publicSession(session) {
   if (!session) return null;
   return {
@@ -380,6 +391,7 @@ function publicSession(session) {
     startedAt: session.startedAt,
     error: session.error,
     screenCapture: session.screenCapture !== false,
+    shipping: session.shipping || null,
     snapshot: session.engine.snapshot()
   };
 }
@@ -417,6 +429,7 @@ module.exports = {
   startSession,
   stopSession,
   stopUserSessions,
+  setSessionShipping,
   registerProduct,
   capturePendingProductShot,
   saveClientOrderShot,
